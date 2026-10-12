@@ -1,0 +1,95 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Caduta Libera · Classico</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Arial Black",Arial,sans-serif;color:#fff;-webkit-user-select:none;user-select:none}
+#st{position:absolute;left:50%;top:50%;width:540px;height:960px;transform-origin:0 0;overflow:hidden;background:#000}
+.l{position:absolute}.sp{position:absolute;pointer-events:none}.bt{cursor:pointer;pointer-events:auto}
+.scr{position:absolute;inset:0;display:none}.scr.on{display:block}
+.bg{position:absolute;left:-100px;top:-100px;width:740px;height:1160px}
+.head{position:absolute;border-radius:50%;background-size:cover;background-position:center}
+.txt{position:absolute;text-align:center;text-shadow:0 2px 3px #000}
+#tiles{position:absolute;left:10px;right:10px;top:430px;display:flex;flex-wrap:wrap;justify-content:center;gap:4px}
+.tile{width:39px;height:55px;background:url(img/letters_sprite_hd/letters_blank.webp) center/100% 100%;color:#1a2a55;font:900 30px/57px Arial;text-align:center}
+.tile.sp0{background:none;width:18px}.tile.rv{color:#0a3aa8}.tile.typed{color:#b0122a}
+.shake{animation:sh .35s}@keyframes sh{25%{transform:translateX(-10px)}75%{transform:translateX(10px)}}
+#kb{position:absolute;opacity:0;left:0;top:500px;width:10px;height:10px}
+.prz{position:absolute;cursor:default}
+#ring .slot{position:absolute;width:100px;height:103px;cursor:pointer}
+.spin{animation:sp 2.5s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.btn2{position:absolute;padding:12px 18px;border-radius:30px;background:linear-gradient(#ffd84a,#e39a00);color:#3a1d00;font-weight:900;text-align:center;cursor:pointer;border:3px solid #7a4a00;box-shadow:0 3px 8px #000}
+input.nm{position:absolute;left:150px;top:490px;width:240px;height:36px;border:0;background:none;color:#fff;font:bold 22px Arial;text-align:center;outline:none}
+</style></head><body>
+<div id="st">
+ <!-- BENVENUTO -->
+ <div class="scr" id="sMenu"><img class="bg" src="img/bg1.webp"><div id="acLogo" style="display:none;position:absolute;left:84px;top:-2px;width:372px;height:280px;background:radial-gradient(#0a2a7a 55%,rgba(0,40,140,0) 72%)"><img id="acLogoI" style="width:100%;height:100%;object-fit:contain"></div>
+  <img class="sp bt" id="mPlay" data-k="screen1_sprite_hd/button1_play">
+  <img class="sp bt" id="mProf" data-k="screen1_sprite_hd/button_profile">
+  <img class="sp bt" id="mInfo" data-k="screen1_sprite_hd/button_instructions">
+  <img class="sp bt" id="mAch" data-k="screen1_sprite_hd/button_achievment"><img class="sp bt" id="mStat" data-k="screen1_sprite_hd/button_statistics"><img class="sp bt" id="mSnd" src="img/screen1_sprite_hd/button_sound_on.webp" style="left:356px;top:776px;width:110px">
+  <div class="txt" style="left:0;right:0;top:860px;font-size:16px;opacity:.8" id="mBest"></div>
+ </div>
+ <!-- PROFILO -->
+ <div class="scr" id="sProf"><img class="bg" src="img/bg1.webp">
+  <img class="sp" data-k="screen1_sprite_hd/manage_frame">
+  <div class="head" id="pPic" style="left:196px;top:93px;width:150px;height:150px"></div>
+  <img class="sp" data-k="screen1_sprite_hd/manage_avatar_frame">
+  <img class="sp bt" id="pCam" data-k="screen1_sprite_hd/manage_button_camera">
+  <img class="sp bt" id="pClose" data-k="screen1_sprite_hd/manage_button_close">
+  <div class="txt" style="left:100px;width:340px;top:330px;font-size:15px;opacity:.75" id="pLocal"></div>
+  <div class="txt" style="left:0;right:0;top:440px;font-size:20px" id="pNameL"></div>
+  <img class="sp" data-k="screen1_sprite_hd/manage_textbox_name_blank"><input class="nm" id="pName" maxlength="12">
+  <div class="txt" style="left:0;right:0;top:590px;font-size:20px" id="pGenL"></div>
+  <img class="sp bt" id="pW" data-k="screen1_sprite_hd/manage_button_gender_woman_off"><img class="sp bt" id="pM" data-k="screen1_sprite_hd/manage_button_gender_man_off">
+  <div class="btn2" id="pOk" style="left:190px;top:790px;width:120px">OK</div>
+  <input type="file" id="pFile" accept="image/*" style="display:none">
+ </div>
+ <!-- TABELLONE -->
+ <div class="scr" id="sBoard"><img class="bg" src="img/bg2.webp">
+  <img class="sp" data-k="screen2_sprite_hd/diamonds_bg"><img class="sp" data-k="screen2_sprite_hd/diamonds_on"><img class="sp" data-k="screen2_sprite_hd/diamonds_count_bg">
+  <div class="txt dia" style="left:13px;width:100px;top:194px;font-size:20px"></div>
+  <div id="prizes"></div>
+  <div id="million"><img class="sp" data-k="screen2_sprite_hd/to_million_label_bg"><img class="sp" id="milN"></div>
+  <img class="sp" data-k="screen2_sprite_hd/score_middle"><img class="sp" data-k="screen2_sprite_hd/score_left"><img class="sp" data-k="screen2_sprite_hd/score_right">
+  <div class="txt" id="bank" style="left:150px;width:240px;top:358px;font-size:34px;color:#fff"></div>
+  <img class="sp bt" id="bAch" data-k="screen2_sprite_hd/achievment_frame"><img class="sp bt" id="bProf" data-k="screen2_sprite_hd/profile_frame">
+  <img class="sp bt" id="bStat" data-k="screen2_sprite_hd/statistics_frame"><img class="sp bt" id="bHome" data-k="screen2_sprite_hd/button_home">
+  <div id="ring"></div>
+  <div class="txt" id="bMsg" style="left:20px;right:20px;top:465px;font-size:22px;color:#ffe27a"></div>
+ </div>
+ <!-- DUELLO -->
+ <div class="scr" id="sDuel"><img class="bg" src="img/bg3.webp">
+  <img class="sp" data-k="screen3_sprite_hd/diamonds_bg"><img class="sp" data-k="screen3_sprite_hd/diamonds_on"><img class="sp" data-k="screen3_sprite_hd/diamonds_count_bg">
+  <div class="txt dia" style="left:10px;width:85px;top:150px;font-size:18px"></div>
+  <div class="txt" id="dN1" style="left:95px;width:160px;top:12px;font-size:17px"></div><div class="txt" id="dN2" style="left:285px;width:160px;top:12px;font-size:17px"></div>
+  <div class="head" id="dH1" style="left:120px;top:48px;width:110px;height:110px"></div><div class="head" id="dH2" style="left:310px;top:48px;width:110px;height:110px"></div>
+  <img class="sp" id="dF1" style="left:89px;top:16px;width:171px"><img class="sp" id="dF2" style="left:279px;top:16px;width:171px">
+  <img class="sp" src="img/screen3_sprite_hd/timer_middle.webp" style="left:200px;top:200px;width:140px;height:46px">
+  <img class="sp" src="img/screen3_sprite_hd/timer_left.webp" style="left:178px;top:194px;height:58px"><img class="sp" src="img/screen3_sprite_hd/timer_right.webp" style="left:334px;top:194px;height:58px">
+  <div class="txt" id="dT" style="left:200px;width:140px;top:205px;font:900 30px Arial;color:#ffd84a"></div>
+  <img class="sp bt" id="puPass" data-k="screen3_sprite_hd/powerup_passquestion"><img class="sp bt" id="puLet" data-k="screen3_sprite_hd/powerup_moreletter"><img class="sp bt" id="puTime" data-k="screen3_sprite_hd/powerup_moretime">
+  <div class="txt" id="dQ" style="left:30px;right:30px;top:300px;font:bold 22px Arial;line-height:28px"></div>
+  <div id="tiles"></div>
+  <div class="txt" id="dTry" style="left:20px;right:20px;top:600px;font:bold 22px Arial;color:#9fe0ff"></div>
+  <div class="txt" id="dHint" style="left:20px;right:20px;top:880px;font:bold 15px Arial;opacity:.7"></div>
+  <input id="kb" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+ </div>
+ <!-- CADUTA -->
+ <div class="scr" id="sDrop"><img class="bg" src="img/bg4.webp">
+  <img class="sp" data-k="screen4_sprite_hd/left_tube_cover_l"><img class="sp" data-k="screen4_sprite_hd/left_tube_cover_r"><img class="sp" data-k="screen4_sprite_hd/right_tube_cover_l"><img class="sp" data-k="screen4_sprite_hd/right_tube_cover_r">
+  <div id="fig1" class="l" style="left:0;top:0"></div><div id="fig2" class="l" style="left:0;top:0"></div>
+  <div id="mach" class="l" style="left:52px;top:960px;width:197px;transition:top 1s cubic-bezier(.2,1.4,.5,1)">
+   <img src="img/screen4_sprite_hd/number_circle_background.webp" style="position:absolute;left:-8px;top:-150px;width:212px;transform:rotate(180deg)">
+   <img id="machAmt" style="position:absolute;left:10px;top:-80px;width:176px">
+   <img src="img/screen4_sprite_hd/prize_machine.webp" style="position:absolute;left:0;top:0;width:197px"></div>
+  <img class="sp" data-k="screen4_sprite_hd/tubes_front">
+ </div>
+ <!-- FINE -->
+ <div class="scr" id="sEnd"><img class="bg" src="img/bg5.webp">
+  <img class="sp" id="eG"><div class="head" id="eH" style="left:222px;top:249px;width:108px;height:108px"></div><img class="sp" data-k="screen5_sprite_hd/profile_frame">
+  <div class="txt" id="eT" style="left:20px;right:20px;top:640px;font-size:30px;color:#ffd84a"></div>
+  <img class="sp bt" id="eR" data-k="screen5_sprite_hd/button_restart">
+ </div>
+ <div id="pop" class="txt" style="display:none;left:40px;right:40px;top:330px;padding:24px;background:rgba(0,10,40,.92);border:2px solid #39c6ff;border-radius:18px;font:bold 20px Arial;line-height:28px;z-index:9"></div>
+</div>
+<script src="../sb3/logo.js"></script><script src="layout.js"></script><script src="domande.js"></script><script src="gioco.js"></script>
+</body></html>
