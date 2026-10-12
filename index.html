@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#02040c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<meta name="app-version" content="1.0">
+<title>Caduta Libera 3D</title>
+  
+  <link rel="stylesheet" href="assets/app.css">
+<script src="js/ep3000.js"></script>
+</head>
+<body>
+<div id="app">
+  <canvas id="c3d"></canvas>
+  <div id="touch"></div>
+  <div id="stage2d"><div id="stageBox"></div></div>
+  <div id="panel"><div id="panelBox"></div></div>
+  <div id="hud">
+    <div id="joy"><div id="joyKnob"></div></div>
+    <div id="vidas" class="ui"></div>
+    <div id="hashtag"></div>
+    <div id="bubble" class="hidden"><b>El Presentador</b><span></span></div>
+    <div id="lower3" class="hidden"></div>
+    <div id="credits" class="hidden"><div id="creditsRoll"></div></div>
+    <div id="toast" class="hidden"></div>
+    <div id="topbar" class="ui">
+      <button id="btnMenu" title="Menú">☰</button>
+      <button id="btnCam" title="Cámara">👁</button>
+      <button id="btnLuces" title="Luces">💡</button>
+      <button id="btnSkip" class="hidden">Saltar ⏭</button>
+    </div>
+    <div id="hint" class="hidden"></div>
+    <div id="actions" class="ui"></div>
+  </div>
+  <div id="menu"></div>
+  <div id="classicWrap" class="hidden"><iframe id="classic" allow="autoplay"></iframe><button id="classicBack" class="ui">⟵ Menú</button></div>
+  <div id="loading"><div class="spin"></div><p>Cargando el plató…</p></div>
+  <div id="rotate">Gira el móvil 📱↻</div>
+  <input id="kb" type="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done" aria-label="Escribe las letras">
+</div>
+<script src="sb3/logo.js"></script>
+<script>
+// Idioma: Italiano (por defecto) o Español · Opciones › Lingua / Idioma. Logo: Opciones › Logo
+window.__LANG = (function () { try { return localStorage.getItem('ac_lang') === 'es' ? 'es' : 'it'; } catch (e) { return 'it'; } })();
+window.__LOGO_LOCAL = window.__logoUrl(window.__LANG);
+document.documentElement.lang = window.__LANG;
+(function () { var l = document.querySelector('link[rel=icon]'); if (l) l.href = window.__logoQue() === 'ac' ? 'logo_ac.png' : 'logo_cl.png'; })();
+if (window.__LANG === 'it') { var q = function (s) { return document.querySelector(s); };
+  q('#loading p').textContent = 'Caricamento dello studio…'; q('#rotate').textContent = 'Ruota il telefono 📱↻'; q('#btnMenu').title = 'Menu'; q('#btnCam').title = 'Telecamera';
+  q('#btnLuces').title = 'Luci'; q('#btnSkip').textContent = 'Salta ⏭'; q('#classicBack').textContent = '⟵ Menu'; q('#bubble b').textContent = 'Il Conduttore'; q('#kb').setAttribute('aria-label', 'Scrivi le lettere'); }
+document.title = window.__LANG === 'it' ? 'Caduta Libera 3D' : '¡Ahora Caigo! 3D';
+document.write('<script src="js/' + (window.__LANG === 'it' ? 'app_it' : 'app') + '.js"><\/script>');
+</script>
+</body>
+</html>
