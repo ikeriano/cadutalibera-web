@@ -276,6 +276,6 @@ $('#eR').onclick = () => nuovaPartita();
 try { if (window.__logoQue && window.__logoQue(LANG) === 'ac') { $('#acLogo').style.display = 'block'; $('#acLogoI').src = window.__LOGO_AC; document.title = '¡Ahora Caigo! · Clásico'; } } catch (e) {}
 // desbloqueo de audio al primer toque (WebView/navegador): relanza la música pendiente
 addEventListener('pointerdown', () => { Object.values(SND).forEach((a) => { if (a.loop && a.paused && !mute && a.dataset.want) a.play().catch(() => {}); }); if (!window.__clUnlock) { window.__clUnlock = 1; if ($('#sMenu').classList.contains('on')) snd('intro-shorter'); } }, true);
-{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.3'); $('#sMenu').appendChild(v); }
+{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.4'); $('#sMenu').appendChild(v); }
 menu();
 })();
