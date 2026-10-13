@@ -21,10 +21,11 @@ const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
 const place = (el, k) => { const v = L[k]; if (!v) return; el.src = 'img/' + k + '.webp'; Object.assign(el.style, { left: v[0] + 'px', top: v[1] + 'px', width: v[2] + 'px', height: v[3] + 'px' }); };
 document.querySelectorAll('[data-k]').forEach((e) => place(e, e.dataset.k));
 // escala
-const fit = () => { const s = Math.min(innerWidth / 540, innerHeight / 960); const st = $('#st'); st.style.transform = `scale(${s}) translate(-50%,-50%)`; st.style.transformOrigin = '0 0'; st.style.left = '50%'; st.style.top = '50%'; st.style.transform = `translate(-50%,-50%) scale(${s})`; st.style.transformOrigin = 'center'; };
-addEventListener('resize', fit); fit();
+const fit = () => { const W0 = innerWidth || document.documentElement.clientWidth || screen.width, H0 = innerHeight || document.documentElement.clientHeight || screen.height; const s = Math.min(W0 / 540, H0 / 960) || 1; const st = $('#st'); st.style.transform = `scale(${s}) translate(-50%,-50%)`; st.style.transformOrigin = '0 0'; st.style.left = '50%'; st.style.top = '50%'; st.style.transform = `translate(-50%,-50%) scale(${s})`; st.style.transformOrigin = 'center'; };
+addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 300)); fit(); [100, 400, 1000, 2500].forEach((t) => setTimeout(fit, t));
 // sonido
-let mute = false; const SND = {}; const snd = (n, loop) => { if (mute) return null; try { const a = SND[n] || (SND[n] = new Audio('snd/' + n + '.mp3')); a.loop = !!loop; a.dataset.want = loop ? '1' : ''; a.currentTime = 0; a.play().catch(() => {}); return a; } catch (e) { return null; } };
+const playSafe = (a) => { try { const r = a.play(); if (r && r.catch) r.catch(() => {}); } catch (e) {} };
+let mute = false; const SND = {}; const snd = (n, loop) => { if (mute) return null; try { const a = SND[n] || (SND[n] = new Audio('snd/' + n + '.mp3')); a.loop = !!loop; a.dataset.want = loop ? '1' : ''; a.currentTime = 0; playSafe(a); return a; } catch (e) { return null; } };
 const stop = (n) => { const a = SND[n]; if (a) { a.dataset.want = ''; a.pause(); a.currentTime = 0; } };
 // stato persistente
 const ld = (k, d) => { try { return JSON.parse(localStorage.getItem('cl_' + k)) ?? d; } catch (e) { return d; } }, sv = (k, v) => { try { localStorage.setItem('cl_' + k, JSON.stringify(v)); } catch (e) {} };
@@ -275,7 +276,8 @@ function finePartita(all, fin) {
 $('#eR').onclick = () => nuovaPartita();
 try { if (window.__logoQue && window.__logoQue(LANG) === 'ac') { $('#acLogo').style.display = 'block'; $('#acLogoI').src = window.__LOGO_AC; document.title = '¡Ahora Caigo! · Clásico'; } } catch (e) {}
 // desbloqueo de audio al primer toque (WebView/navegador): relanza la música pendiente
-addEventListener('pointerdown', () => { Object.values(SND).forEach((a) => { if (a.loop && a.paused && !mute && a.dataset.want) a.play().catch(() => {}); }); if (!window.__clUnlock) { window.__clUnlock = 1; if ($('#sMenu').classList.contains('on')) snd('intro-shorter'); } }, true);
-{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.4'); $('#sMenu').appendChild(v); }
-menu();
+addEventListener('pointerdown', () => { Object.values(SND).forEach((a) => { if (a.loop && a.paused && !mute && a.dataset.want) playSafe(a); }); if (!window.__clUnlock) { window.__clUnlock = 1; if ($('#sMenu').classList.contains('on')) snd('intro-shorter'); } }, true);
+{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.5'); $('#sMenu').appendChild(v); }
+try { menu(); } catch (e) { window.__clLog && window.__clLog('ERROR menu: ' + (e && e.message)); }
+window.__clPronto = 1; { const l = document.getElementById('clLoad'); if (l) l.remove(); }
 })();
