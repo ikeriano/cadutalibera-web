@@ -18,6 +18,13 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Aria
 .spin{animation:sp 2.5s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
 .btn2{position:absolute;padding:12px 18px;border-radius:30px;background:linear-gradient(#ffd84a,#e39a00);color:#3a1d00;font-weight:900;text-align:center;cursor:pointer;border:3px solid #7a4a00;box-shadow:0 3px 8px #000}
 input.nm{position:absolute;left:150px;top:490px;width:240px;height:36px;border:0;background:none;color:#fff;font:bold 22px Arial;text-align:center;outline:none}
+#gfT{position:absolute;left:-40px;right:-40px;top:770px;text-align:center;font:900 76px/1 "Arial Black",Arial,sans-serif;letter-spacing:2px;background:linear-gradient(#fff 0%,#fff1c8 45%,#e9b97a 56%,#fff 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 4px 0 #7a4a10) drop-shadow(0 8px 10px rgba(0,0,0,.7));animation:gfIn 3.4s ease both}
+@keyframes gfIn{0%{opacity:0;transform:scale(1.7)}14%{opacity:1;transform:scale(1)}86%{opacity:1}100%{opacity:0}}
+.gfc{position:absolute;width:50px;height:50px;border-radius:50%;background:radial-gradient(#9aa0aa,#3a3e46);border:3px solid #c8ccd4;box-shadow:0 2px 4px #000;transition:all .3s}
+.gfc svg{width:100%;height:100%}.gfc.on{background:radial-gradient(#ffe68a,#d08a00);border-color:#fff3b0;box-shadow:0 0 14px #ffd23a}
+.gfk{position:absolute;cursor:pointer;pointer-events:auto}.gfk.on{filter:brightness(1.4) sepia(1) saturate(4) hue-rotate(5deg)}
+#gfPass{position:absolute;left:400px;top:858px;width:110px;height:40px;font:900 24px/40px Arial;color:#fff;text-align:center;background:linear-gradient(#b07038,#5a2c0a);border:2px solid #fff;border-radius:4px;cursor:pointer;letter-spacing:1px;box-shadow:0 2px 0 #2a1200}
+#gfBk{position:absolute;left:300px;top:858px;width:80px;height:40px;font:900 24px/40px Arial;color:#fff;text-align:center;background:linear-gradient(#6a6e78,#2a2c32);border:2px solid #ddd;border-radius:4px;cursor:pointer}
 </style></head><body>
 <div id="st">
  <!-- BENVENUTO -->
@@ -49,6 +56,7 @@ input.nm{position:absolute;left:150px;top:490px;width:240px;height:36px;border:0
  <div class="scr" id="sDuel"></div>
  <!-- CADUTA -->
  <div class="scr" id="sDrop"></div>
+ <div class="scr" id="sFin"></div>
  <!-- FINE -->
  <div class="scr" id="sEnd"><img class="bg" src="img/bg5.webp">
   <img class="sp" id="eG"><div class="head" id="eH" style="left:222px;top:249px;width:108px;height:108px"></div><img class="sp" data-k="screen5_sprite_hd/profile_frame">
@@ -58,5 +66,5 @@ input.nm{position:absolute;left:150px;top:490px;width:240px;height:36px;border:0
  <input id="kb" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
  <div id="pop" class="txt" style="display:none;left:40px;right:40px;top:330px;padding:24px;background:rgba(0,10,40,.92);border:2px solid #39c6ff;border-radius:18px;font:bold 20px Arial;line-height:28px;z-index:9"></div>
 </div>
-<script>window.CL_VERSION='1.0.2'</script><script src="../sb3/logo.js?v=1.0.2"></script><script src="layout.js?v=1.0.2"></script><script src="seq.js?v=1.0.2"></script><script src="domande.js?v=1.0.2"></script><script src="gioco.js?v=1.0.2"></script>
+<script>window.CL_VERSION='1.0.3'</script><script src="../sb3/logo.js?v=1.0.3"></script><script src="layout.js?v=1.0.3"></script><script src="seq.js?v=1.0.3"></script><script src="domande.js?v=1.0.3"></script><script src="gioco.js?v=1.0.3"></script>
 </body></html>

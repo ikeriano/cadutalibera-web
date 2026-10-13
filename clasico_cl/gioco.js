@@ -4,12 +4,12 @@ const LANG = (() => { try { const v = localStorage.getItem('ac_lang'); return v 
 const T = {
  it: { you: 'Tu', choose: 'Scegli il tuo avversario', turn: 'Il tuo turno', oppTurn: 'Turno di', pass: 'Passi la domanda!', wrong: 'Sbagliato, riprova!', ok: 'Esatto!',
   name: 'Il tuo nome', gender: 'Femmina? Maschio?', local: 'Profilo solo su questo dispositivo (niente Facebook): nome, foto e genere restano qui.',
-  noDia: 'Non hai abbastanza diamanti', ancora: 'Ancora', al: 'Al', win: 'Hai vinto', lost: 'Sei caduto!', fellAll: 'Hai battuto tutti i 10 avversari!',
+  noDia: 'Non hai abbastanza diamanti', ancora: 'Ancora', al: 'Al', win: 'Hai vinto', lost: 'Sei caduto!', fellAll: 'Hai battuto tutti i 10 avversari!', fin: 'GIOCO FINALE', passB: 'PASSA', finInfo: '10 domande in 2 minuti per il montepremi!', finWin: 'Hai superato il gioco finale!', finLost: 'Il tempo è scaduto: sei caduto!',
   info: 'Sfida 10 avversari. Hai 30 secondi a turno: completa la parola con le lettere che mancano e il turno passa all\'avversario. Se il tuo tempo finisce, la botola si apre! Usa i diamanti: ◀ passa la domanda, A rivela una lettera, ⌛ aggiunge tempo.',
   stats: (s) => `Partite: ${s.p} · Avversari battuti: ${s.b} · Record: ${eur(s.r)}`, ach: (s) => `Traguardi: ${s.r >= 100000 ? '🏆' : '·'} 100.000 € · ${s.p >= 10 ? '🏆' : '·'} 10 partite · ${s.b >= 50 ? '🏆' : '·'} 50 avversari`, type: 'Scrivi la risposta' },
  es: { you: 'Tú', choose: 'Elige a tu rival', turn: 'Tu turno', oppTurn: 'Turno de', pass: '¡Pasas la pregunta!', wrong: '¡Fallo, inténtalo otra vez!', ok: '¡Correcto!',
   name: 'Tu nombre', gender: '¿Mujer? ¿Hombre?', local: 'Perfil solo en este dispositivo (sin Facebook): nombre, foto y género se quedan aquí.',
-  noDia: 'No tienes suficientes diamantes', ancora: 'Faltan', al: 'Para', win: 'Has ganado', lost: '¡Has caído!', fellAll: '¡Has derribado a los 10 rivales!',
+  noDia: 'No tienes suficientes diamantes', ancora: 'Faltan', al: 'Para', win: 'Has ganado', lost: '¡Has caído!', fellAll: '¡Has derribado a los 10 rivales!', fin: 'JUEGO FINAL', passB: 'PASA', finInfo: '¡10 preguntas en 2 minutos por el bote!', finWin: '¡Has superado el juego final!', finLost: 'Se acabó el tiempo: ¡has caído!',
   info: 'Reta a 10 rivales. Tienes 30 segundos por turno: completa la palabra con las letras que faltan y el turno pasa al rival. Si se te acaba el tiempo, ¡se abre la trampilla! Usa los diamantes: ◀ pasa la pregunta, A revela una letra, ⌛ añade tiempo.',
   stats: (s) => `Partidas: ${s.p} · Rivales derribados: ${s.b} · Récord: ${eur(s.r)}`, ach: (s) => `Logros: ${s.r >= 100000 ? '🏆' : '·'} 100.000 € · ${s.p >= 10 ? '🏆' : '·'} 10 partidas · ${s.b >= 50 ? '🏆' : '·'} 50 rivales`, type: 'Escribe la respuesta' } }[LANG];
 const NOMI_M = ['Silvio','Marco','Luca','Giorgio','Paolo','Franco','Davide','Matteo','Enzo','Carlo','Stefano','Nicola','Pietro','Alberto','Gianni'];
@@ -161,15 +161,16 @@ function drawTiles(full) { // GuideManager.showOnScreen: righe da 13, centrate, 
 }
 const libere = () => D.ans.filter((c, k) => !D.fixed[k] && c !== ' ').length;
 const risposta = () => { let ti = 0; return D.ans.map((c, k) => D.fixed[k] ? c : (D.typed[ti++] || '')).join(''); };
-function ciclo() { if (!D || D.end || !D.run) return; const now = performance.now(); if (!D.wait) D.t -= now - D.last; D.last = now; D.tt.textContent = fmt(D.t);
+function ciclo() { if (!D || D.end || !D.run) return; const now = performance.now(); if (!D.wait) D.t -= now - D.last; D.last = now; D.tt.textContent = D.fin ? fmtM(D.t) : fmt(D.t);
   if (D.who === 1 && !D.dec && !D.wait) { D.dec = true; if (decideAI()) { const qn = G.qi; const dl = Math.random() > .2 ? (qn <= 2 ? 5500 + Math.random() * 2000 : qn <= 5 ? 6500 + Math.random() * 1000 : 7500 + Math.random() * 1000) : 8500 + Math.random() * 1500; D.aiT = later(dl, () => { if (!D.end && D.who === 1 && !D.wait) rispondeAI(); }); } }
   if (D.t <= 5500 && !D.warn && !D.wait) { D.warn = 1; snd('time_running_out'); }
+  if (D.fin && D.t <= 0 && !D.wait) { D.end = true; return finTempo(); }
   if (D.t <= 0 && !D.wait) { D.t = 0; D.tt.textContent = fmt(0); D.end = true; stop('head_to_head_music'); $('#kb').blur(); later(1000, () => { snd('yes1'); drawTiles(true); }); later(3000, () => caduta(D.who === 0 ? 'me' : 'opp')); } }
 function decideAI() { const t = D.turnos, rf = G.round * 2; let n; if (t <= 1) return true; else if (t <= 3) n = Math.random() * (D.o.level + 20 + rf); else if (t <= 4) n = Math.random() * (D.o.level + 15 + rf); else if (t <= 5) n = Math.random() * (D.o.level + 10 + rf); else if (t <= 7) n = Math.random() * (D.o.level - 20 + rf); else return false; return n >= 60; }
 function rispondeAI() { snd('yes1'); D.typed = D.ans.filter((c, k) => !D.fixed[k] && c !== ' '); drawTiles(); later(150, () => giusto()); }
 function giusto() { stop('time_running_out'); snd('correct answer'); D.wait = true; const toMe = D.who === 1; chiudiEPassa(toMe); later(3700, () => { if (D.end) return; D.who = toMe ? 0 : 1; nuovaDomanda(); D.last = performance.now(); if (toMe) $('#kb').focus(); }); }
 $('#kb').addEventListener('input', () => { if (!D || D.who !== 0 || D.end || D.wait) { $('#kb').value = ''; return; } const v = norm($('#kb').value); const need = libere(); $('#kb').value = v.slice(0, need); D.typed = [...v.slice(0, need)]; drawTiles();
-  if (D.typed.length >= need) { if (norm(risposta()) === norm(D.ans.join(''))) giusto(); else if (D.err) { snd('error'); D.err = false; } } else D.err = true; });
+  if (D.typed.length >= need) { if (norm(risposta()) === norm(D.ans.join(''))) (D.fin ? finOk() : giusto()); else if (D.err) { snd('error'); D.err = false; if (D.fin) later(500, () => { if (!D.end) { $('#kb').value = ''; D.typed = []; drawTiles(); } }); } } else D.err = true; });
 $('#sDuel').addEventListener('click', (e) => { if (!e.target.closest('.bt')) $('#kb').focus(); });
 const norm = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const costo = (s, c) => { if (dia < c) { pop(T.noDia, 1500); return false; } dia -= c; setDia(); D.dt.textContent = dia; const f = txt(D.r, '-' + c, s.x, s.y, 90, 25, '#ff4040'); const o = { y: 0, a: 1, draw() { f.style.transform = `translateY(${this.y}px)`; f.style.opacity = this.a; } }; tween(o, { y: -125, a: 0 }, { time: 1500 }); return true; };
@@ -201,20 +202,80 @@ async function caduta(loser) {
   tween(loseHead, { sx: .7, sy: 1.3 }, { time: 500, delay: 800, ease: 'inQuint' });
   tween(loseHead, { y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(loseHands, { sx: .7, y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(loseBody, { y: 960 + 500 + 230 }, { time: 1000, delay: 2200, ease: 'inQuart' });
   if (!myTurn) { later(5000, () => snd('open_coin')); tween(machine, { y: 480 }, { time: 1500, delay: 3000 }); for (const s of [circ, amt]) { tween(s, { y: 480 - 262 + 25 }, { time: 1500, delay: 3000 }); tween(s, { rot: 360 }, { time: 2250, delay: 5000 }); }
-    await sleep(7250 + 1500); D.o.out = true; G.bank += D.o.val; G.round++; stats.b++; sv('stats', stats); if (G.opp.every((o) => o.out)) return finePartita(true); board(true); }
+    await sleep(7250 + 1500); D.o.out = true; G.bank += D.o.val; G.round++; stats.b++; sv('stats', stats); if (G.opp.every((o) => o.out)) return giocoFinale(); board(true); }
   else { await sleep(4500); finePartita(false); }
 }
-window.__CL = { nuovaPartita, duello, caduta, apriProfilo, board, menu, get G() { return G; }, get D() { return D; } };
-function finePartita(all) {
+
+// ----- GIOCO FINALE (come il juego final di ¡Ahora Caigo! Antena 3 2011-2021): da solo sulla botola centrale,
+// 10 domande in 2:00; se le indovini tutte prima che scada il tempo porti a casa il montepremi, se no la botola si apre.
+const fmtM = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const PIE = (c) => `<svg viewBox="0 0 50 50"><g fill="${c}"><ellipse cx="18" cy="18" rx="6" ry="10"/><ellipse cx="18" cy="36" rx="5" ry="6"/><ellipse cx="32" cy="16" rx="6" ry="10"/><ellipse cx="32" cy="34" rx="5" ry="6"/></g></svg>`;
+const ORMA = (x, y, w, rot) => { const d = document.createElement('div'); d.className = 'sp'; d.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${w}px;opacity:.55;transform:rotate(${rot}deg)`; d.innerHTML = `<svg viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="none" stroke="#ffcf4a" stroke-width="6"/><g fill="#ffcf4a"><ellipse cx="72" cy="68" rx="24" ry="42"/><ellipse cx="72" cy="146" rx="20" ry="24"/><ellipse cx="130" cy="58" rx="24" ry="42"/><ellipse cx="130" cy="136" rx="20" ry="24"/></g></svg>`; return d; };
+async function giocoFinale() {
+  killAll(); stop('head_to_head_music'); const r = lienzo('sFin', 'bg1');
+  if (LANG === 'es' && window.__LOGO_AC) { const l = document.createElement('img'); l.src = window.__LOGO_AC; l.className = 'sp'; l.style.cssText = 'left:84px;top:-2px;width:372px;height:280px;object-fit:contain'; r.appendChild(l); }
+  const CY = 960 * .705; const h1 = new Spr(r, 'screen2_sprite_hd/compass_point_halo1', 270, CY), h2 = new Spr(r, 'screen2_sprite_hd/compass_point_halo2', 270, CY);
+  tween(h1, { rot: -360 }, { time: 17000 }); tween(h2, { rot: 360 }, { time: 17000 });
+  new Spr(r, 'screen2_sprite_hd/player_body' + myBody()); new Spr(r, myPic(), 270, CY, { head: 1, r: 70 }); const pf = new Spr(r, 'screen2_sprite_hd/head_frame', 270, CY); pf.sx = pf.sy = 1.2; pf.draw();
+  const t = document.createElement('div'); t.id = 'gfT'; t.textContent = T.fin; r.appendChild(t);
+  const sub = txt(r, T.finInfo + '  ' + eur(G.bank), 270, 900, 520, 22, '#ffd84a'); sub.style.textShadow = '0 2px 3px #000';
+  await fadeTo('sFin', 700); snd('intro-shorter'); await sleep(3600);
+  // schermo del gioco finale
+  const q = lienzo('sFin', 'bg3'); r.appendChild(ORMA(-70, 780, 230, -18)); r.appendChild(ORMA(380, 780, 230, 18));
+  D = { fin: true, i: -1, o: null, r: q, who: 0, q: null, typed: [], end: false, turnos: 0, ok: 0, coda: [] };
+  for (let k = 0; k < 10; k++) { if (G.qi >= G.q.length) { G.q = mazzo(); G.qi = 0; } D.coda.push(G.q[G.qi++]); }
+  new Spr(q, myPic(), 270, PY, { head: 1, r: 72.5 }); D.pf = new Spr(q, 'screen3_sprite_hd/head_frame_onturn', 270, PY);
+  D.mk = []; for (let k = 0; k < 10; k++) { const c = document.createElement('div'); c.className = 'gfc'; c.style.left = (8 + (k % 2) * 56) + 'px'; c.style.top = (14 + Math.floor(k / 2) * 54 + (k % 2) * 27) + 'px'; c.innerHTML = PIE('#fff'); q.appendChild(c); D.mk.push(c); }
+  const TX = 430, TY = 236; D.cm = new Spr(q, 'screen3_sprite_hd/timer_middle', TX, TY); D.cr = new Spr(q, 'screen3_sprite_hd/timer_right', TX + 50, TY); D.cl = new Spr(q, 'screen3_sprite_hd/timer_left', TX - 50, TY);
+  D.tt = txt(q, '02:00', TX, TY, 120, 25, '#ffff00', 'Helvetica,Arial'); D.ttO = { x: TX, a: 1, draw() { D.tt.style.opacity = this.a; } };
+  D.qt = document.createElement('div'); D.qt.className = 'txt'; Object.assign(D.qt.style, { left: '13px', width: '513px', top: '320px', font: '23px Arial', textShadow: '0 2px 3px #000', lineHeight: '27px' }); q.appendChild(D.qt);
+  D.tiles = document.createElement('div'); q.appendChild(D.tiles);
+  // tastiera A–Z su due righe con le tessere originali
+  ['ABCDEFGHIJKLM', 'NOPQRSTUVWXYZ'].forEach((row, ri) => [...row].forEach((ch, k) => { const s = new Spr(q, 'letters_sprite_hd/' + letra(ch, 'fixed'), 270 + (k - 6) * 40, 680 + ri * 62); s.el.classList.add('gfk'); s.el.onpointerdown = (e) => { e.preventDefault(); s.el.classList.add('on'); setTimeout(() => s.el.classList.remove('on'), 140); tasto(ch); }; }));
+  const bk = document.createElement('div'); bk.id = 'gfBk'; bk.textContent = '⌫'; bk.onpointerdown = (e) => { e.preventDefault(); tasto('⌫'); }; q.appendChild(bk);
+  const ps = document.createElement('div'); ps.id = 'gfPass'; ps.textContent = T.passB; ps.onpointerdown = (e) => { e.preventDefault(); finPassa(); }; q.appendChild(ps);
+  await fadeTo('sFin', 700); snd('head_to_head_music', true);
+  D.t = 120000; later(1200, () => { finDomanda(); D.last = performance.now(); D.run = true; });
+  clearInterval(D.loop); D.loop = setInterval(ciclo, 33); $('#kb').value = ''; setTimeout(() => $('#kb').focus(), 300);
+}
+function tasto(ch) { if (!D || !D.fin || D.end || D.wait) return; const kb = $('#kb'); kb.value = ch === '⌫' ? kb.value.slice(0, -1) : kb.value + ch; kb.dispatchEvent(new Event('input')); }
+function finDomanda() { // come nuovaDomanda, ma con il tempo globale di 2 minuti
+  D.q = D.coda[0]; const a = [...D.q[1].toUpperCase()]; const idx = a.map((c, k) => /\p{L}|\d/u.test(c) ? k : -1).filter((k) => k >= 0);
+  const n = Math.max(1, Math.round(idx.length * 0.35)); const sh = new Set(idx.sort(() => Math.random() - .5).slice(0, n)); if (sh.size >= idx.length) sh.delete(idx[0]);
+  D.ans = a; D.fixed = a.map((c, k) => c === ' ' || !/\p{L}|\d/u.test(c) || sh.has(k)); D.typed = []; D.qt.textContent = D.q[0]; D.err = true; D.wait = false; $('#kb').value = ''; drawTiles();
+}
+function finOk() { snd('correct answer'); D.wait = true; D.mk[D.ok].classList.add('on'); D.ok++; D.coda.shift(); drawTiles(true);
+  if (D.ok >= 10) { D.end = true; stop('head_to_head_music'); stop('time_running_out'); later(900, () => finCaduta(true)); return; }
+  later(900, () => { if (D.end) return; finDomanda(); D.last = performance.now(); }); }
+function finPassa() { if (!D || !D.fin || D.end || D.wait) return; snd('Pass_2'); D.coda.push(D.coda.shift()); D.wait = true; later(350, () => { if (D.end) return; finDomanda(); D.last = performance.now(); }); }
+function finTempo() { D.tt.textContent = '00:00'; stop('head_to_head_music'); $('#kb').blur(); later(1000, () => { snd('yes1'); drawTiles(true); }); later(3000, () => finCaduta(false)); }
+async function finCaduta(win) { // DropScene con il solo concorrente sulla botola
+  clearInterval(D.loop); killAll(); stop('time_running_out'); const r = lienzo('sDrop', 'bg4'); const pb = myBody(), dir = (win ? 'win-' : 'lose-') + BODYDIR[pb], F = SEQ[dir].map((f) => dir + '/' + f);
+  const c1 = document.createElement('div'), c2 = document.createElement('div'); r.append(c1, c2); new Spr(c1, 'screen4_sprite_hd/left_tube_cover_l'); new Spr(c1, 'screen4_sprite_hd/left_tube_cover_r'); new Spr(c2, 'screen4_sprite_hd/right_tube_cover_l'); new Spr(c2, 'screen4_sprite_hd/right_tube_cover_r');
+  const g = document.createElement('div'); r.append(g); const by = 960 * .29, hy = 960 * .285;
+  const body = new Spr(g, F[0], 405, by), head = new Spr(g, myPic(), 405, 175, { head: 1, r: 74 }), hands = new Spr(g, win ? F[17] : F[3], win ? 397.5 : 405, hy);
+  new Spr(r, 'screen4_sprite_hd/tubes_front', 270, 580); await fadeTo('sDrop', 500); await sleep(1200);
+  if (win) { snd('money_total'); tween(head, { y: 185 }, { time: 400, ease: 'inOutBack' }); tween(head, { y: 155, x: head.x - 5, rot: -10 }, { time: 500, delay: 300, ease: 'inOutBack' }); play(body, F.slice(0, 17), 600); play(hands, F.slice(17), 850);
+    const m = txt(r, eur(G.bank), 270, 470, 400, 54, '#ffd84a'); m.style.textShadow = '0 3px 6px #000'; m.style.opacity = 0; const o = { a: 0, y: 0, draw() { m.style.opacity = this.a; m.style.transform = `translateY(${this.y}px)`; } }; tween(o, { a: 1, y: -40 }, { time: 900, delay: 600, ease: 'outCubic' });
+    await sleep(4500); return finePartita(true, true); }
+  snd('contestant_Lock_2_A'); c2.style.transition = 'opacity .1s'; c2.style.opacity = 0;
+  for (const s of [head, hands, body]) tween(s, { y: s.y - 25 }, { time: 400, ease: 'outQuart' });
+  play(body, F.slice(0, 3), 400); later(400, () => play(hands, F.slice(4, 15), 1500)); later(1400, () => play(hands, F.slice(15, 26), 750, 3));
+  for (const s of [head, hands, body]) tween(s, { y: s.y + 325 }, { time: 1500, delay: 350, ease: 'inOutQuart' }); tween(head, { sx: .7, sy: 1.3 }, { time: 500, delay: 800, ease: 'inQuint' });
+  tween(head, { y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(hands, { sx: .7, y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(body, { y: 960 + 500 + 230 }, { time: 1000, delay: 2200, ease: 'inQuart' });
+  await sleep(4500); finePartita(false, true);
+}
+window.__CL = { giocoFinale, nuovaPartita, duello, caduta, apriProfilo, board, menu, get G() { return G; }, get D() { return D; } };
+function finePartita(all, fin) {
   scr('sEnd'); const n = G.opp.filter((o) => o.out).length; const g = n >= 10 ? '10' : n >= 8 ? '8-9' : n >= 6 ? '6-7' : n >= 3 ? '3-5' : '1-2';
   place($('#eG'), 'screen5_sprite_hd/' + g + '_graphic'); $('#eH').style.backgroundImage = `url(${myPic()})`;
   const premio = all ? G.bank : 0; if (premio > stats.r) stats.r = premio; sv('stats', stats);
-  $('#eT').innerHTML = (all ? T.fellAll + '<br>' + T.win + ': ' + eur(premio) : T.lost + '<br>' + n + ' / 10 · ' + eur(G.bank)); snd(all ? 'money_total' : 'error');
+  $('#eT').innerHTML = fin ? (all ? T.finWin + '<br>' + T.win + ': ' + eur(premio) : T.finLost + '<br>' + T.fellAll + ' · ' + eur(G.bank)) : (all ? T.fellAll + '<br>' + T.win + ': ' + eur(premio) : T.lost + '<br>' + n + ' / 10 · ' + eur(G.bank)); snd(all ? 'money_total' : 'error');
 }
 $('#eR').onclick = () => nuovaPartita();
 try { if (window.__logoQue && window.__logoQue(LANG) === 'ac') { $('#acLogo').style.display = 'block'; $('#acLogoI').src = window.__LOGO_AC; document.title = '¡Ahora Caigo! · Clásico'; } } catch (e) {}
 // desbloqueo de audio al primer toque (WebView/navegador): relanza la música pendiente
 addEventListener('pointerdown', () => { Object.values(SND).forEach((a) => { if (a.loop && a.paused && !mute && a.dataset.want) a.play().catch(() => {}); }); if (!window.__clUnlock) { window.__clUnlock = 1; if ($('#sMenu').classList.contains('on')) snd('intro-shorter'); } }, true);
-{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.2'); $('#sMenu').appendChild(v); }
+{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.3'); $('#sMenu').appendChild(v); }
 menu();
 })();
