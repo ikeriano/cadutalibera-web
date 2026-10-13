@@ -24,12 +24,12 @@ document.querySelectorAll('[data-k]').forEach((e) => place(e, e.dataset.k));
 const fit = () => { const s = Math.min(innerWidth / 540, innerHeight / 960); const st = $('#st'); st.style.transform = `scale(${s}) translate(-50%,-50%)`; st.style.transformOrigin = '0 0'; st.style.left = '50%'; st.style.top = '50%'; st.style.transform = `translate(-50%,-50%) scale(${s})`; st.style.transformOrigin = 'center'; };
 addEventListener('resize', fit); fit();
 // sonido
-let mute = false; const SND = {}; const snd = (n, loop) => { if (mute) return null; try { const a = SND[n] || (SND[n] = new Audio('snd/' + n + '.mp3')); a.loop = !!loop; a.currentTime = 0; a.play().catch(() => {}); return a; } catch (e) { return null; } };
-const stop = (n) => { const a = SND[n]; if (a) { a.pause(); a.currentTime = 0; } };
+let mute = false; const SND = {}; const snd = (n, loop) => { if (mute) return null; try { const a = SND[n] || (SND[n] = new Audio('snd/' + n + '.mp3')); a.loop = !!loop; a.dataset.want = loop ? '1' : ''; a.currentTime = 0; a.play().catch(() => {}); return a; } catch (e) { return null; } };
+const stop = (n) => { const a = SND[n]; if (a) { a.dataset.want = ''; a.pause(); a.currentTime = 0; } };
 // stato persistente
 const ld = (k, d) => { try { return JSON.parse(localStorage.getItem('cl_' + k)) ?? d; } catch (e) { return d; } }, sv = (k, v) => { try { localStorage.setItem('cl_' + k, JSON.stringify(v)); } catch (e) {} };
 let prof = ld('prof', null), stats = ld('stats', { p: 0, b: 0, r: 0 }), dia = ld('dia', 200);
-const scr = (id) => { document.querySelectorAll('.scr').forEach((s) => s.classList.toggle('on', s.id === id)); };
+const scr = (id) => { killAll && 0; document.querySelectorAll('.scr').forEach((s) => s.classList.toggle('on', s.id === id)); };
 const pop = (t, ms = 2200) => new Promise((r) => { const p = $('#pop'); p.innerHTML = t; p.style.display = 'block'; setTimeout(() => { p.style.display = 'none'; r(); }, ms); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const myPic = () => prof && prof.pic ? prof.pic : 'img/ppl_sprite/avatar_' + (prof && prof.g === 'f' ? 'woman' : 'man') + '.webp';
@@ -52,132 +52,159 @@ $('#pCam').onclick = () => $('#pFile').click(); $('#pPic').onclick = () => $('#p
 $('#pFile').onchange = (e) => { const f = e.target.files[0]; if (!f) return; const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 220; const g = c.getContext('2d'); const s = Math.min(im.width, im.height); g.drawImage(im, (im.width - s) / 2, (im.height - s) / 2, s, s, 0, 0, 220, 220); tmp.pic = c.toDataURL('image/jpeg', 0.85); drawGen(); }; im.src = URL.createObjectURL(f); };
 $('#pClose').onclick = () => menu();
 $('#pOk').onclick = () => { tmp.n = ($('#pName').value.trim() || T.you).slice(0, 12); prof = tmp; sv('prof', prof); profNext ? nuovaPartita() : menu(); };
-// PARTITA
+// ===== motor tipo Corona: sprites centrados + transiciones (port fiel de Indoor / HeadToHead / DropScene) =====
+const SEQ = window.CL_SEQ, PPL = window.CL_PPL;
+const EZ = { lin: (t) => t, outQuart: (t) => 1 - Math.pow(1 - t, 4), inQuart: (t) => t * t * t * t, inQuint: (t) => t ** 5, outCubic: (t) => 1 - Math.pow(1 - t, 3),
+  inOutQuart: (t) => t < .5 ? 8 * t ** 4 : 1 - Math.pow(-2 * t + 2, 4) / 2,
+  inOutBack: (t) => { const c = 1.70158 * 1.525; return t < .5 ? (Math.pow(2 * t, 2) * ((c + 1) * 2 * t - c)) / 2 : (Math.pow(2 * t - 2, 2) * ((c + 1) * (t * 2 - 2) + c) + 2) / 2; } };
+let TW = [], timers = [];
+const later = (ms, f) => { const t = setTimeout(f, ms); timers.push(t); return t; };
+const killAll = () => { TW = []; timers.forEach(clearTimeout); timers = []; };
+function tween(o, to, { time = 500, delay = 0, ease = 'lin', done } = {}) { const tw = { o, to, time, ease: EZ[ease] || EZ.lin, start: performance.now() + delay, from: null, done }; TW.push(tw); return tw; }
+(function loop(now) { requestAnimationFrame(loop); TW = TW.filter((tw) => { if (now < tw.start) return true; if (!tw.from) { tw.from = {}; for (const k in tw.to) tw.from[k] = tw.o[k]; }
+  const p = Math.min(1, (now - tw.start) / Math.max(1, tw.time)), e = tw.ease(p); for (const k in tw.to) tw.o[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e; tw.o.draw && tw.o.draw();
+  if (p >= 1) { tw.done && tw.done(); return false; } return true; }); })(performance.now());
+class Spr { // como display.newImage(sheet, frame, x, y): el centro del marco original va en (x, y)
+  constructor(par, key, x = 270, y = 480, opt = {}) { this.el = document.createElement(opt.head ? 'div' : 'img'); this.el.className = 'sp' + (opt.head ? ' head' : ''); this.x = x; this.y = y; this.sx = 1; this.sy = 1; this.rot = 0; this.alpha = 1; this.r = opt.r;
+    if (opt.head) { this.el.style.backgroundImage = `url(${key})`; this.el.style.width = this.el.style.height = 2 * opt.r + 'px'; } else this.frame(key); par.appendChild(this.el); this.draw(); }
+  frame(key) { this.k = key; const v = L[key] || [0, 0, 0, 0, 0, 0]; this.v = v; this.el.src = 'img/' + key + '.webp'; Object.assign(this.el.style, { width: v[2] + 'px', height: v[3] + 'px' }); this.draw && this.draw(); return this; }
+  draw() { let l, t, ox, oy; if (this.r != null) { l = this.x - this.r; t = this.y - this.r; ox = oy = this.r; } else { const v = this.v; l = this.x - v[4] / 2 + v[0]; t = this.y - v[5] / 2 + v[1]; ox = v[4] / 2 - v[0]; oy = v[5] / 2 - v[1]; }
+    const s = this.el.style; s.left = l + 'px'; s.top = t + 'px'; s.transformOrigin = `${ox}px ${oy}px`; s.transform = `rotate(${this.rot}deg) scale(${this.sx},${this.sy})`; s.opacity = this.alpha; }
+}
+const play = (o, frames, time, loops = 1) => { const n = frames.length, step = time / n; let k = 0; const f = () => { o.frame(frames[k % n]); k++; if (k < n * loops) later(step, f); }; f(); };
+const txt = (par, t, x, y, w, size, col = '#fff', font = 'Arial') => { const d = document.createElement('div'); d.className = 'txt'; Object.assign(d.style, { left: (x - w / 2) + 'px', width: w + 'px', top: (y - size * .6) + 'px', font: `${size}px ${font}`, color: col, textShadow: 'none' }); d.textContent = t; par.appendChild(d); return d; };
+const fadeTo = async (id, ms = 500) => { const cur = document.querySelector('.scr.on'), nx = $('#' + id); nx.style.transition = ''; nx.style.opacity = 0; nx.classList.add('on'); nx.offsetWidth; nx.style.transition = `opacity ${ms}ms`; nx.style.opacity = 1; if (cur && cur !== nx) { cur.style.transition = `opacity ${ms}ms`; cur.style.opacity = 0; } await sleep(ms); document.querySelectorAll('.scr').forEach((s) => { if (s !== nx) { s.classList.remove('on'); s.style.opacity = ''; } }); };
+const lienzo = (id, bg) => { const r = $('#' + id); r.innerHTML = ''; const b = document.createElement('img'); b.className = 'bg'; b.src = 'img/' + bg + '.webp'; r.appendChild(b); return r; };
+// ===== PARTITA =====
 let G = null;
+const VAL = [[20000, 'prize_5_20000_l'], [15000, 'prize_5_15000_r'], [15000, 'prize_4_15000_l'], [10000, 'prize_4_10000_r'], [10000, 'prize_3_10000_l'], [10000, 'prize_3_10000_r'], [7000, 'prize_2_7000_l'], [5000, 'prize_2_5000_r'], [5000, 'prize_1_5000_l'], [3000, 'prize_1_3000_r']];
+const ANG = [306, 342, 18, 54, 90, 126, 162, 198, 234, 270];
 const mazzo = () => { const a = window.CL_DOMANDE.map((d) => LANG === 'es' ? [d[2], d[3]] : [d[0], d[1]]); for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 function nuovaPartita() {
-  const used = new Set(); const opp = [];
-  const fem = [0, 2, 4, 6, 8].sort(() => Math.random() - 0.5);
-  for (let i = 0; i < 10; i++) { let n; do n = 1 + (Math.random() * 137 | 0); while (used.has(n)); used.add(n); opp.push({ img: 'img/ppl_sprite/italian_' + n + '.webp', f: i % 2 === 0, nome: '', val: 0, out: false, body: 1 + (Math.random() * 4 | 0) }); }
-  opp.forEach((o) => { const lst = o.f ? NOMI_F : NOMI_M; o.nome = lst[Math.random() * lst.length | 0]; });
-  const vals = VALORI.map((v, i) => i).sort(() => Math.random() - 0.5); opp.forEach((o, i) => { o.val = VALORI[vals[i]]; o.pz = vals[i]; });
-  G = { opp, bank: 0, q: mazzo(), qi: 0, round: 0, usedPz: new Set() }; stats.p++; sv('stats', stats); board();
+  const men = PPL.filter((p) => p.startsWith('man')).sort(() => Math.random() - .5), wom = PPL.filter((p) => p.startsWith('woman')).sort(() => Math.random() - .5);
+  const vals = VAL.map((v, i) => i).sort(() => Math.random() - .5);
+  const opp = []; for (let i = 0; i < 10; i++) { const f = Math.random() < .5, lst = f ? NOMI_F : NOMI_M;
+    opp.push({ img: 'img/ppl_sprite/' + (f ? wom : men).pop() + '.webp', f, nome: lst[Math.random() * lst.length | 0], pz: vals[i], val: VAL[vals[i]][0], out: false, ang: ANG[i], level: 40 + (Math.random() * 30 | 0), body: f ? (Math.random() < .5 ? 2 : 3) : (Math.random() < .5 ? 1 : 4) }); }
+  G = { opp, bank: 0, q: mazzo(), qi: 0, round: 0 }; stats.p++; sv('stats', stats); board(false);
 }
-function board(msg) {
-  scr('sBoard'); setDia(); stop('head_to_head_music'); snd('small_Talk_loop', true);
-  const left = G.opp.filter((o) => !o.out).length;
-  $('#bank').textContent = eur(G.bank);
-  // premios
-  const pz = $('#prizes'); pz.innerHTML = '';
-  PRZ.forEach((k, i) => { const im = document.createElement('img'); im.className = 'sp'; place(im, 'screen2_sprite_hd/' + k + (G.usedPz.has(i) ? '_dark' : '_light')); pz.appendChild(im); });
-  const showGrid = G.round > 0 && G.round % 2 === 1; pz.style.display = showGrid ? '' : 'none'; $('#million').style.display = showGrid ? 'none' : '';
-  place($('#milN'), 'screen2_sprite_hd/to_million_label_' + Math.max(1, left));
-  // anillo
-  const ring = $('#ring'); ring.innerHTML = ''; const cx = 270, cy = 690, R = 198;
-  G.opp.forEach((o, i) => { const a = -Math.PI / 2 + i * Math.PI * 2 / 10 + Math.PI / 10, x = cx + Math.cos(a) * R, y = cy + Math.sin(a) * R * 0.98;
-    const d = document.createElement('div'); d.className = 'slot'; d.style.left = (x - 50) + 'px'; d.style.top = (y - 51) + 'px';
-    if (o.out) d.innerHTML = `<img src="img/screen2_sprite_hd/otherman_fell_icon.webp" style="width:92px;margin:5px">`;
-    else { d.innerHTML = `<div class="head" style="left:9px;top:9px;width:82px;height:82px;background-image:url(${o.img})"></div><img class="sp" src="img/screen2_sprite_hd/head_frame.webp" style="left:0;top:0;width:100px;height:103px">`; d.onclick = () => scegli(i, d); }
-    ring.appendChild(d); });
-  const c = document.createElement('div'); c.className = 'l'; c.style.cssText = `left:${cx - 66}px;top:${cy - 120}px;width:132px;height:136px`;
-  c.innerHTML = `<img id="comp" class="sp" src="img/screen2_sprite_hd/compass_point_halo1.webp" style="left:-55px;top:-55px;width:242px"><img class="sp spin" src="img/screen2_sprite_hd/compass_point_halo2.webp" style="left:-55px;top:-55px;width:242px"><div class="head" style="left:12px;top:12px;width:108px;height:108px;background-image:url(${myPic()})"></div><img class="sp" src="img/screen2_sprite_hd/head_frame_chosen.webp" style="left:0;top:0;width:132px;height:136px">`;
-  ring.appendChild(c);
-  const b = document.createElement('img'); b.className = 'sp'; place(b, 'screen2_sprite_hd/player_body' + (prof.g === 'f' ? 2 : 1)); b.style.top = (cy + 22) + 'px'; b.style.left = '229px'; b.style.height = '160px'; b.style.width = 'auto'; ring.appendChild(b);
-  $('#bMsg').textContent = msg || T.choose;
+const myBody = () => prof.g === 'f' ? 2 : 1;
+const BODYDIR = ['', 'seq1_suit-hd', 'seq2_hasuda-hd', 'seq3_yellow-hd', 'seq4_sweater-hd'];
+// ----- TABELLONE (Indoor) -----
+async function board(addDia) {
+  killAll(); stop('head_to_head_music'); const r = lienzo('sBoard', 'bg2'); const CY = 960 * .705;
+  const h1 = new Spr(r, 'screen2_sprite_hd/compass_point_halo1', 270, CY), h2 = new Spr(r, 'screen2_sprite_hd/compass_point_halo2', 270, CY), cp = new Spr(r, 'screen2_sprite_hd/compass_point', 270, CY);
+  let it = 0; const comp = () => { it++; tween(h1, { rot: -360 * it }, { time: 17000, done: comp }); tween(h2, { rot: 360 * it }, { time: 17000 }); }; comp();
+  new Spr(r, 'screen2_sprite_hd/player_body' + myBody()); new Spr(r, myPic(), 270, CY, { head: 1, r: 70 }); const pf = new Spr(r, 'screen2_sprite_hd/head_frame', 270, CY); pf.sx = pf.sy = 1.2; pf.draw();
+  const board = document.createElement('div'), left = document.createElement('div'); r.append(board, left);
+  G.opp.forEach((o, i) => { const a = (36 * (i + 1)) * Math.PI / 180, x = 200 * Math.cos(a) + 270, y = 200 * Math.sin(a) + CY;
+    const st = new Spr(r, 'screen2_sprite_hd/otherman_fell_icon', x, y); st.rot = o.ang; st.alpha = o.out ? 1 : 0; st.draw();
+    if (!o.out) { const hd = new Spr(r, o.img, x, y, { head: 1, r: 57.5 }); new Spr(r, 'screen2_sprite_hd/head_frame', x, y); hd.el.classList.add('bt'); hd.el.onclick = () => scegli(i, cp); }
+    new Spr(board, 'screen2_sprite_hd/' + VAL[o.pz][1] + (o.out ? '_dark' : '_light')); });
+  new Spr(left, 'screen2_sprite_hd/to_million_label_bg'); new Spr(left, 'screen2_sprite_hd/to_million_label_' + Math.max(1, G.opp.filter((o) => !o.out).length)); left.style.opacity = 0;
+  for (const k of ['button_home', 'score_middle', 'score_right', 'score_left', 'diamonds_count_bg']) { const s = new Spr(r, 'screen2_sprite_hd/' + k); if (k === 'button_home') { s.el.classList.add('bt'); s.el.onclick = () => { killAll(); menu(); }; } }
+  const dv = L['screen2_sprite_hd/diamonds_count_bg'], dt = txt(r, dia, dv[0] + dv[2] / 2, dv[1] + dv[3] / 2, 100, 25);
+  new Spr(r, 'screen2_sprite_hd/diamonds_bg'); new Spr(r, 'screen2_sprite_hd/diamonds_on');
+  const sm = L['screen2_sprite_hd/score_middle']; txt(r, eur(G.bank), 270, sm[1] + sm[3] / 2, 324, 32, '#ffff00');
+  for (const [k, f] of [['profile_frame', () => apriProfilo(false)], ['statistics_frame', () => pop(T.stats(stats), 3000)], ['achievment_frame', () => pop(T.ach(stats), 3000)]]) { const s = new Spr(r, 'screen2_sprite_hd/' + k); s.el.classList.add('bt'); s.el.onclick = f; }
+  await fadeTo('sBoard', G.round ? 500 : 300); snd('intro-shorter');
+  // tabellone ⇄ «Ancora N al milione» (como replaceBoardStatus cada 2,5 s)
+  later(5000, () => { board.style.opacity = 0; left.style.opacity = 1; }); later(7500, () => { board.style.opacity = 1; left.style.opacity = 0; });
+  if (addDia) { const n = 10 + 5 * G.round; dia += n; setDia(); dt.textContent = dia; snd('money_total'); const f = txt(r, '+' + n, dv[0] + dv[2] / 2, dv[1] + dv[3] / 2, 100, 27); const o = { y: 0, a: 1, draw() { f.style.transform = `translateY(${this.y}px)`; f.style.opacity = this.a; } }; tween(o, { y: -300, a: 0 }, { time: 2500 }); }
+  busy = false;
 }
-$('#bHome').onclick = () => menu();
-$('#bProf').onclick = () => apriProfilo(false);
-$('#bStat').onclick = () => pop(T.stats(stats), 3000);
-$('#bAch').onclick = () => pop(T.ach(stats), 3000);
 let busy = false;
-async function scegli(i, el) { if (busy) return; busy = true; snd('contestant_Lock_2_A'); el.style.filter = 'drop-shadow(0 0 18px #ff2a2a)'; await sleep(900); busy = false; duello(i); }
-// DUELLO
-let D = null, tick = null;
-function duello(i) {
-  stop('small_Talk_loop'); scr('sDuel'); setDia(); const o = G.opp[i];
-  D = { i, o, t: [30000, 30000], who: 0, q: null, shown: new Set(), typed: '', aiT: null, end: false };
-  $('#dN1').textContent = prof.n; $('#dN2').textContent = o.nome; $('#dH1').style.backgroundImage = `url(${myPic()})`; $('#dH2').style.backgroundImage = `url(${o.img})`;
-  snd('head_to_head_music', true); nuovaDomanda(); turno(0);
-  clearInterval(tick); let last = performance.now();
-  tick = setInterval(() => { if (D.end) return; const now = performance.now(); D.t[D.who] -= now - last; last = now; drawT();
-    if (D.t[D.who] <= 5500 && !D.warn) { D.warn = 1; snd('time_running_out'); }
-    if (D.t[D.who] <= 0) { D.t[D.who] = 0; drawT(); fine(D.who === 0 ? 'opp' : 'me'); } }, 50);
-  $('#kb').value = ''; setTimeout(() => $('#kb').focus(), 300);
+function scegli(i, cp) { if (busy) return; busy = true; snd('Correct_16'); tween(cp, { rot: G.opp[i].ang - 180 }, { time: 300 }); later(500, () => duello(i)); }
+// ----- DUELLO (HeadToHead) -----
+let D = null;
+const PX = 365, PY = 150, OX = 192.5, CLY = PY + 86;
+const letra = (c, tipo) => { const ch = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (/[0-9]/.test(ch)) return `letters_${tipo}_n${ch}`; if (ch === "'") return `letters_${tipo}_apostrophe`; if (ch === '.') return `letters_${tipo}_dot`; if (ch === '/') return `letters_${tipo}_slash`; if (ch === '-') return `letters_${tipo}_separator`;
+  if (!/[a-z]/.test(ch)) return `letters_${tipo}_separator`; const n = ch.charCodeAt(0) - 96; const sp = tipo === 'opponent' ? { u: '21.1u' } : { i: '9.1i', n: '14.1n', o: '15.1o', u: '21.1u' }; return `letters_${tipo}_${sp[ch] || n + ch}`; };
+async function duello(i) {
+  killAll(); const r = lienzo('sDuel', 'bg3'); const o = G.opp[i];
+  D = { i, o, r, who: 0, q: null, guide: [], typed: [], end: false, turnos: 0, qn: 0 };
+  D.ti = new Spr(r, 'screen3_sprite_hd/turn_indicator', PX - 2.5, PY); D.nm = txt(r, prof.n, PX - 2.5, prof.n.length >= 12 ? 62.5 : 82.5, 130, 21); D.nm.style.top = ((prof.n.length >= 12 ? 62.5 : 82.5) - 48) + 'px'; D.nm.style.opacity = 0;
+  new Spr(r, myPic(), PX, PY, { head: 1, r: 72.5 }); D.pf = new Spr(r, 'screen3_sprite_hd/head_frame_onturn', PX, PY);
+  new Spr(r, o.img, OX, PY, { head: 1, r: 72.5 }); D.of = new Spr(r, 'screen3_sprite_hd/head_frame_offturn', OX, PY);
+  D.cm = new Spr(r, 'screen3_sprite_hd/timer_middle', PX, CLY); D.cm.sx = .1; D.cm.draw(); D.cr = new Spr(r, 'screen3_sprite_hd/timer_right', PX, CLY); D.cl = new Spr(r, 'screen3_sprite_hd/timer_left', PX, CLY);
+  D.tt = txt(r, '00:30', PX, CLY, 120, 25, '#ffff00', 'Helvetica,Arial'); D.ttO = { x: PX, a: 0, draw() { D.tt.style.left = (this.x - 60) + 'px'; D.tt.style.opacity = this.a; } }; D.ttO.draw(); D.ti.sx = 1; 
+  for (const k of ['diamonds_count_bg', 'diamonds_bg', 'diamonds_on']) new Spr(r, 'screen3_sprite_hd/' + k);
+  const dv = L['screen3_sprite_hd/diamonds_count_bg']; D.dt = txt(r, dia, dv[0] + dv[2] / 2, dv[1] + dv[3] / 2, 90, 22);
+  D.pu = {}; for (const [k, f] of [['powerup_passquestion', puPass], ['powerup_moretime', puTime], ['powerup_moreletter', puLet]]) { const s = new Spr(r, 'screen3_sprite_hd/' + k); s.el.classList.add('bt'); s.el.onclick = () => { if (D.who !== 0 || D.end || D.wait) return; tween(s, { sx: .95, sy: .95 }, { time: 60 }); tween(s, { sx: 1, sy: 1 }, { time: 60, delay: 80 }); f(s); }; D.pu[k] = s; }
+  D.qt = document.createElement('div'); D.qt.className = 'txt'; Object.assign(D.qt.style, { left: '13px', width: '513px', top: '320px', font: '23px Arial', textShadow: 'none', lineHeight: '27px' }); r.appendChild(D.qt);
+  D.tiles = document.createElement('div'); r.appendChild(D.tiles);
+  await fadeTo('sDuel', 700); snd('head_to_head_music', true);
+  apriOrologio(); D.t = 30000; later(1500, () => { nuovaDomanda(); D.last = performance.now(); D.run = true; });
+  clearInterval(D.loop); D.loop = setInterval(ciclo, 33); $('#kb').value = ''; setTimeout(() => $('#kb').focus(), 300);
 }
-const drawT = () => { const ms = Math.max(0, D.t[D.who]); $('#dT').textContent = String(Math.floor(ms / 1000)).padStart(2, '0') + ':' + String(Math.floor(ms % 1000 / 10)).padStart(2, '0'); };
+const fmt = (ms) => { ms = Math.max(0, ms); return String(Math.floor(ms / 1000)).padStart(2, '0') + ':' + String(Math.floor(ms % 1000 / 10)).padStart(2, '0'); };
+function apriOrologio() { const x = D.cm.x; D.ti.alpha = 1; tween(D.ti, { sx: 1 }, { time: 500, delay: 500 }); tween(D.cm, { sx: 1 }, { time: 500, delay: 500 }); tween(D.cr, { x: x + 50 }, { time: 500, delay: 500 }); tween(D.cl, { x: x - 50 }, { time: 500, delay: 500 }); const n = { a: 0, draw() { D.nm.style.opacity = this.a; } }; tween(n, { a: 1 }, { time: 500, delay: 800 }); }
+function chiudiEPassa(toMe) { const n = { a: 1, draw() { D.nm.style.opacity = this.a; } }; tween(n, { a: 0 }, { time: 500 }); tween(D.ti, { sx: 0.000001 }, { time: 500, delay: 500 }); tween(D.cm, { sx: .1 }, { time: 500, delay: 500 }); tween(D.cr, { x: D.cm.x }, { time: 500, delay: 500 }); tween(D.cl, { x: D.cm.x }, { time: 500, delay: 500 });
+  tween(D.ttO, { a: 0 }, { time: 500, delay: 500, done: () => { const X = toMe ? PX : OX; D.nm.textContent = toMe ? prof.n : D.o.nome; D.nm.style.left = (X - 2.5 - 65) + 'px'; D.ti.alpha = 0; D.ti.draw(); D.ti.alpha = 1;
+    tween(D.ti, { x: X - 2.5 }, { time: 500, delay: 500 }); tween(D.cm, { x: X }, { time: 500, delay: 500 }); tween(D.cr, { x: X, rot: toMe ? 0 : -360 }, { time: 500, delay: 500 }); tween(D.cl, { x: X, rot: toMe ? 0 : -360 }, { time: 500, delay: 500 }); tween(D.ttO, { x: X }, { time: 500, delay: 500, done: apriOrologio }); } }); }
 function nuovaDomanda(keep) {
-  if (!keep) { if (G.qi >= G.q.length) { G.q = mazzo(); G.qi = 0; } D.q = G.q[G.qi++]; }
-  const a = D.q[1]; D.shown = new Set(); const idx = [...a].map((c, k) => /\p{L}/u.test(c) ? k : -1).filter((k) => k >= 0);
-  const n = Math.max(1, Math.round(idx.length * (0.45 - Math.min(0.2, G.round * 0.02))));
-  idx.sort(() => Math.random() - 0.5).slice(0, n).forEach((k) => D.shown.add(k));
-  if (D.shown.size >= idx.length) D.shown.delete(idx[0]);
-  D.typed = ''; $('#kb').value = ''; $('#dQ').textContent = D.q[0]; drawTiles(); snd('Reveal');
+  if (!keep) { if (G.qi >= G.q.length) { G.q = mazzo(); G.qi = 0; } D.q = G.q[G.qi++]; const a = [...D.q[1].toUpperCase()]; const idx = a.map((c, k) => /\p{L}|\d/u.test(c) ? k : -1).filter((k) => k >= 0);
+    const n = Math.max(1, Math.round(idx.length * (0.4 - Math.min(0.2, G.round * 0.02)))); const sh = new Set(idx.sort(() => Math.random() - .5).slice(0, n)); if (sh.size >= idx.length) sh.delete(idx[0]);
+    D.ans = a; D.fixed = a.map((c, k) => c === ' ' || !/\p{L}|\d/u.test(c) || sh.has(k)); }
+  D.typed = []; D.qt.textContent = D.q[0]; tween(D.ttO, { a: 1 }, { time: 250 }); D.t = 30000; D.warn = 0; D.err = true; D.wait = false; D.dec = false;
+  if (D.who === 0) { D.pf.frame('screen3_sprite_hd/head_frame_onturn'); D.of.frame('screen3_sprite_hd/head_frame_offturn'); } else { D.turnos++; D.pf.frame('screen3_sprite_hd/head_frame_offturn'); D.of.frame('screen3_sprite_hd/head_frame_onturn'); }
+  drawTiles();
 }
-const norm = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9Ñ]/g, '');
-function drawTiles(typed) {
-  const a = D.q[1], box = $('#tiles'); box.innerHTML = ''; const t = typed != null ? [...typed] : null;
-  [...a].forEach((c, k) => { const d = document.createElement('div'); d.className = 'tile' + (c === ' ' ? ' sp0' : '');
-    if (c !== ' ') { if (t && t.length) { const ch = t.shift(); d.textContent = ch; d.classList.add('typed'); } else if (D.shown.has(k)) { d.textContent = c; d.classList.add('rv'); } }
-    box.appendChild(d); });
+function drawTiles(full) { // GuideManager.showOnScreen: righe da 13, centrate, y = 355 + 57,5·riga
+  const box = D.tiles; box.innerHTML = ''; const a = D.ans, tipoOn = D.who === 0 ? 'on' : 'opponent'; const words = []; let w = [];
+  a.forEach((c, k) => { if (c === ' ') { words.push(w); w = []; } else w.push(k); }); words.push(w);
+  const rows = []; let row = [], cnt = 0; for (const wd of words) { if (row.length && cnt + wd.length > 13) { rows.push(row); row = []; cnt = 0; } row.push(wd); cnt += wd.length + 1; } rows.push(row);
+  let ti = 0, cursor = null; const vals = []; for (const k of a.keys()) { if (a[k] === ' ') continue; if (D.fixed[k]) vals.push([k, 'fixed', a[k]]); else { const t = full ? a[k] : D.typed[ti++]; vals.push([k, t ? tipoOn : null, t]); if (!t && cursor == null) cursor = k; } }
+  const map = new Map(vals.map((v) => [v[0], v]));
+  rows.forEach((rw, ri) => { const size = rw.reduce((s, wd, j) => s + wd.length + (j < rw.length - 1 ? 1 : 0), 0); let x = (526.5 - size * 39) / 2 + 39 * .7; const y = 355 + 57.5 * (ri + 1);
+    rw.forEach((wd) => { wd.forEach((k) => { const [, tipo, ch] = map.get(k); new Spr(box, 'letters_sprite_hd/' + (tipo ? letra(ch, tipo) : (D.who === 0 ? 'letters_blank' : 'letters_oppontnt_blank')), x, y); if (k === cursor && D.who === 0 && !full) new Spr(box, 'letters_sprite_hd/letters_on_light', x, y); x += 39; }); x += 39; }); });
 }
-function turno(w) {
-  D.who = w; D.warn = 0; place($('#dF1'), 'screen3_sprite_hd/head_frame_' + (w === 0 ? 'onturn' : 'offturn')); place($('#dF2'), 'screen3_sprite_hd/head_frame_' + (w === 1 ? 'onturn' : 'offturn'));
-  $('#dF1').style.left = '89px'; $('#dF1').style.top = '16px'; $('#dF2').style.left = '279px'; $('#dF2').style.top = '16px';
-  $('#dTry').textContent = w === 0 ? T.turn : T.oppTurn + ' ' + D.o.nome; $('#dHint').textContent = w === 0 ? T.type : '';
-  ['#puPass', '#puLet', '#puTime'].forEach((s) => $(s).style.opacity = w === 0 ? 1 : 0.35);
-  clearTimeout(D.aiT); drawT();
-  if (w === 1) { // l'avversario risponde (o no)
-    const p = Math.max(0.55, 0.9 - G.round * 0.035); const sa = Math.random() < p; const dl = 5500 + Math.random() * 4500;
-    if (sa && dl < D.t[1]) D.aiT = setTimeout(() => { if (D.end) return; D.typed = D.q[1]; drawTiles(D.q[1].replace(/ /g, '')); snd('Correct_5'); setTimeout(() => { if (D.end) return; nuovaDomanda(); turno(0); $('#kb').focus(); }, 900); }, dl);
-    else { // tentativi sbagliati visibili
-      let k = 0; const fake = () => { if (D.end || D.who !== 1) return; snd('error'); $('#tiles').classList.add('shake'); setTimeout(() => $('#tiles').classList.remove('shake'), 400); if (++k < 4) D.aiT = setTimeout(fake, 4000 + Math.random() * 3000); }; D.aiT = setTimeout(fake, 3500);
-    }
-  }
-}
-$('#kb').addEventListener('input', () => { if (!D || D.who !== 0 || D.end || D._pause) { $('#kb').value = ''; return; } const v = norm($('#kb').value); const need = norm(D.q[1]).length; $('#kb').value = v.slice(0, need); drawTiles(v.slice(0, need)); snd('clockMove'); if (v.length >= need) prova(v.slice(0, need)); });
-$('#kb').addEventListener('keydown', (e) => { if (e.key === 'Enter') prova(norm($('#kb').value)); });
+const libere = () => D.ans.filter((c, k) => !D.fixed[k] && c !== ' ').length;
+const risposta = () => { let ti = 0; return D.ans.map((c, k) => D.fixed[k] ? c : (D.typed[ti++] || '')).join(''); };
+function ciclo() { if (!D || D.end || !D.run) return; const now = performance.now(); if (!D.wait) D.t -= now - D.last; D.last = now; D.tt.textContent = fmt(D.t);
+  if (D.who === 1 && !D.dec && !D.wait) { D.dec = true; if (decideAI()) { const qn = G.qi; const dl = Math.random() > .2 ? (qn <= 2 ? 5500 + Math.random() * 2000 : qn <= 5 ? 6500 + Math.random() * 1000 : 7500 + Math.random() * 1000) : 8500 + Math.random() * 1500; D.aiT = later(dl, () => { if (!D.end && D.who === 1 && !D.wait) rispondeAI(); }); } }
+  if (D.t <= 5500 && !D.warn && !D.wait) { D.warn = 1; snd('time_running_out'); }
+  if (D.t <= 0 && !D.wait) { D.t = 0; D.tt.textContent = fmt(0); D.end = true; stop('head_to_head_music'); $('#kb').blur(); later(1000, () => { snd('yes1'); drawTiles(true); }); later(3000, () => caduta(D.who === 0 ? 'me' : 'opp')); } }
+function decideAI() { const t = D.turnos, rf = G.round * 2; let n; if (t <= 1) return true; else if (t <= 3) n = Math.random() * (D.o.level + 20 + rf); else if (t <= 4) n = Math.random() * (D.o.level + 15 + rf); else if (t <= 5) n = Math.random() * (D.o.level + 10 + rf); else if (t <= 7) n = Math.random() * (D.o.level - 20 + rf); else return false; return n >= 60; }
+function rispondeAI() { snd('yes1'); D.typed = D.ans.filter((c, k) => !D.fixed[k] && c !== ' '); drawTiles(); later(150, () => giusto()); }
+function giusto() { stop('time_running_out'); snd('correct answer'); D.wait = true; const toMe = D.who === 1; chiudiEPassa(toMe); later(3700, () => { if (D.end) return; D.who = toMe ? 0 : 1; nuovaDomanda(); D.last = performance.now(); if (toMe) $('#kb').focus(); }); }
+$('#kb').addEventListener('input', () => { if (!D || D.who !== 0 || D.end || D.wait) { $('#kb').value = ''; return; } const v = norm($('#kb').value); const need = libere(); $('#kb').value = v.slice(0, need); D.typed = [...v.slice(0, need)]; drawTiles();
+  if (D.typed.length >= need) { if (norm(risposta()) === norm(D.ans.join(''))) giusto(); else if (D.err) { snd('error'); D.err = false; } } else D.err = true; });
 $('#sDuel').addEventListener('click', (e) => { if (!e.target.closest('.bt')) $('#kb').focus(); });
-function prova(v) {
-  if (v === norm(D.q[1])) { snd('Correct_16'); $('#dTry').textContent = T.ok; drawTiles(D.q[1].replace(/ /g, '')); D.who = -1; setTimeout(() => { if (D.end) return; nuovaDomanda(); turno(1); }, 900); D.who = 0; D.t[0] += 0; D.end = false; D._pause = true; setTimeout(() => D._pause = false, 900); }
-  else { snd('error'); $('#tiles').classList.add('shake'); setTimeout(() => { $('#tiles').classList.remove('shake'); $('#kb').value = ''; drawTiles(); }, 400); $('#dTry').textContent = T.wrong; }
-}
-const usa = (c) => { if (dia < c) { pop(T.noDia, 1500); return false; } dia -= c; setDia(); snd('powerUp'); return true; };
-$('#puPass').onclick = () => { if (D.who !== 0 || D.end) return; if (!usa(30)) return; $('#dTry').textContent = T.pass; snd('Pass_2'); nuovaDomanda(true); turno(1); };
-$('#puLet').onclick = () => { if (D.who !== 0 || D.end) return; const a = D.q[1]; const h = [...a].map((c, k) => /\p{L}/u.test(c) && !D.shown.has(k) ? k : -1).filter((k) => k >= 0); if (h.length < 2) return; if (!usa(20)) return; D.shown.add(h[Math.random() * h.length | 0]); $('#kb').value = ''; drawTiles(); $('#kb').focus(); };
-$('#puTime').onclick = () => { if (D.who !== 0 || D.end) return; if (!usa(25)) return; D.t[0] += 10000; drawT(); $('#kb').focus(); };
-async function fine(loser) {
-  D.end = true; clearInterval(tick); clearTimeout(D.aiT); stop('head_to_head_music'); stop('time_running_out'); $('#kb').blur();
-  await sleep(800); await caduta(loser);
-  if (loser === 'opp') { D.o.out = true; G.bank += D.o.val; G.usedPz.add(D.o.pz); G.round++; stats.b++; dia += 15; sv('stats', stats);
-    if (G.opp.every((o) => o.out)) return finePartita(true); board(); }
-  else finePartita(false);
-}
-// CADUTA
+const norm = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const costo = (s, c) => { if (dia < c) { pop(T.noDia, 1500); return false; } dia -= c; setDia(); D.dt.textContent = dia; const f = txt(D.r, '-' + c, s.x, s.y, 90, 25, '#ff4040'); const o = { y: 0, a: 1, draw() { f.style.transform = `translateY(${this.y}px)`; f.style.opacity = this.a; } }; tween(o, { y: -125, a: 0 }, { time: 1500 }); return true; };
+function puPass(s) { if (!costo(s, 30)) return; snd('Pass_2'); stop('time_running_out'); D.wait = true; chiudiEPassa(false); later(3700, () => { if (D.end) return; D.who = 1; nuovaDomanda(true); D.last = performance.now(); }); }
+function puTime(s) { if (!costo(s, 25)) return; snd('Correct_7'); stop('time_running_out'); D.t += 10000; D.warn = 0; $('#kb').focus(); }
+function puLet(s) { const libs = D.ans.map((c, k) => !D.fixed[k] && c !== ' ' ? k : -1).filter((k) => k >= 0); if (libs.length < 2) return; if (!costo(s, 20)) return; snd('Reveal'); D.fixed[libs[Math.random() * libs.length | 0]] = true; D.typed = []; $('#kb').value = ''; drawTiles(); $('#kb').focus(); }
+// ----- CADUTA (DropScene) -----
 async function caduta(loser) {
-  scr('sDrop'); snd('Pass_2'); const meLose = loser === 'me';
-  const fig = (el, x, lose, head, body) => { el.innerHTML = ''; el.style.left = '0px'; el.style.top = '0px'; el.style.transition = '';
-    const pre = lose ? `lose-seq${body}_${['', 'suit', 'hasuda', 'yellow', 'sweater'][body]}-hd/lose_` : `win-seq${body}_${['', 'suit', 'hasuda', 'yellow', 'sweater'][body]}-hd/win_`;
-    const b = document.createElement('img'), h = document.createElement('img'), hd = document.createElement('div');
-    const W = lose ? 385 : 271; [b, h].forEach((im) => { im.className = 'sp'; im.style.cssText = `left:${x - W / 2}px;top:${278 - 230}px;width:${W}px;height:460px`; });
-    hd.className = 'head'; hd.style.cssText = `left:${x - 74}px;top:${175 - 74 - 40}px;width:148px;height:148px;background-image:url(${head})`;
-    el.append(b, hd, h); return { b, h, hd, pre }; };
-  const xL = 150, xR = 405; // il perdente a sinistra (sopra la botola sinistra), come nell'app
-  const lb = meLose ? (prof.g === 'f' ? 3 : 1) : D.o.body, wb = meLose ? D.o.body : (prof.g === 'f' ? 3 : 1);
-  const Lf = fig($('#fig1'), xL, true, meLose ? myPic() : D.o.img, lb), Wf = fig($('#fig2'), xR, false, meLose ? D.o.img : myPic(), wb);
-  const anim = async (f, a, b, n, ms) => { for (let k = 0; k < n; k++) { a(k); await sleep(ms / n); } };
-  const p4 = (k) => String(k).padStart(4, '0');
-  Lf.b.src = `img/${Lf.pre}body${lb}.1.webp`; Lf.h.src = `img/${Lf.pre}hands${lb === 3 ? 2 : lb}_0001.webp`;
-  Wf.b.src = `img/${Wf.pre}body${wb}_0001.webp`; Wf.h.src = `img/${Wf.pre}hands${wb}_0001.webp`;
-  $('#mach').style.top = '960px'; $('#machAmt').src = 'img/screen4_sprite_hd/number_circle_prize_' + D.o.val + '.webp';
-  await sleep(700); snd('yes1');
-  const hw = (lb === 3 ? 2 : lb);
-  await Promise.all([anim(0, (k) => { Wf.b.src = `img/${Wf.pre}body${wb}_${p4(k + 1)}.webp`; Wf.h.src = `img/${Wf.pre}hands${wb}_${p4(k + 1)}.webp`; }, 0, 17, 850),
-    anim(0, (k) => { Lf.h.src = `img/${Lf.pre}hands${hw}_${p4(5 + k)}.webp`; if (k < 3) Lf.b.src = `img/${Lf.pre}body${lb}.${k + 1}.webp`; }, 0, 11, 1500)]);
-  snd('Correct_7');
-  const el = $('#fig1'); el.style.transition = 'top .9s cubic-bezier(.6,0,1,.6)'; el.style.top = '700px'; await sleep(1000);
-  if (!meLose) { snd('open_coin'); $('#mach').style.left = (xL - 98) + 'px'; $('#mach').style.top = '300px'; await sleep(1400); snd('money_total'); }
-  await sleep(1300);
+  clearInterval(D.loop); killAll(); stop('head_to_head_music'); stop('time_running_out'); const myTurn = loser === 'me'; const r = lienzo('sDrop', 'bg4');
+  const c1 = document.createElement('div'), c2 = document.createElement('div'); r.append(c1, c2); new Spr(c1, 'screen4_sprite_hd/left_tube_cover_l'); new Spr(c1, 'screen4_sprite_hd/left_tube_cover_r'); new Spr(c2, 'screen4_sprite_hd/right_tube_cover_l'); new Spr(c2, 'screen4_sprite_hd/right_tube_cover_r');
+  const ob = D.o.body, pb = myBody(); const wB = myTurn ? ob : pb, lB = myTurn ? pb : ob;
+  const wd = 'win-' + BODYDIR[wB], ld = 'lose-' + BODYDIR[lB], W = SEQ[wd].map((f) => wd + '/' + f), Lf = SEQ[ld].map((f) => ld + '/' + f);
+  const lx = myTurn ? 405 : 150, wx = myTurn ? 150 : 405, wxh = myTurn ? 142.5 : 397.5, by = 960 * .29, hy = 960 * .285;
+  const lg = document.createElement('div'), wg = document.createElement('div'); r.append(lg, wg);
+  const loseBody = new Spr(lg, Lf[0], lx, by), oppH = { img: D.o.img }, loseHead = new Spr(lg, myTurn ? myPic() : D.o.img, myTurn ? 405 : 142.5, 175, { head: 1, r: 74 }), loseHands = new Spr(lg, Lf[3], lx, hy);
+  const winBody = new Spr(wg, W[0], wx, by), winHead = new Spr(wg, myTurn ? D.o.img : myPic(), myTurn ? 142.5 : 405, 175, { head: 1, r: 74 }), winHands = new Spr(wg, W[17], wxh, hy);
+  const machine = new Spr(r, 'screen4_sprite_hd/prize_machine', 270, 1920), circ = new Spr(r, 'screen4_sprite_hd/number_circle_background', 150, 1920 - 262 + 25), amt = new Spr(r, 'screen4_sprite_hd/number_circle_prize_' + D.o.val, 150, 1920 - 262 + 25);
+  circ.rot = amt.rot = 180; circ.draw(); amt.draw(); r.insertBefore(circ.el, machine.el); r.insertBefore(amt.el, machine.el); new Spr(r, 'screen4_sprite_hd/tubes_front', 270, 580);
+  await fadeTo('sDrop', 500); await sleep(1500);
+  // dropAction
+  snd('contestant_Lock_2_A'); const cv = myTurn ? c2 : c1; cv.style.transition = 'opacity .1s'; cv.style.opacity = 0;
+  // winner
+  tween(winHead, { y: 185 }, { time: 400, ease: 'inOutBack' }); tween(winHead, { y: 155, x: winHead.x - 5, rot: -10 }, { time: 500, delay: 300, ease: 'inOutBack' }); play(winBody, W.slice(0, 17), 600); play(winHands, W.slice(17), 850);
+  tween(winHead, { sx: 1.1, sy: .9 }, { time: 600, delay: 300, ease: 'inOutBack' }); tween(winHead, { sx: 1, sy: 1 }, { time: 600, delay: 700, ease: 'outCubic' });
+  // loser
+  for (const s of [loseHead, loseHands, loseBody]) tween(s, { y: s.y - 25 }, { time: 400, ease: 'outQuart' });
+  play(loseBody, Lf.slice(0, 3), 400); loseHands.frame(Lf[3]); later(400, () => play(loseHands, Lf.slice(4, 15), 1500)); later(1400, () => play(loseHands, Lf.slice(15, 26), 750, 3));
+  for (const s of [loseHead, loseHands, loseBody]) tween(s, { y: s.y + 325 }, { time: 1500, delay: 350, ease: 'inOutQuart' });
+  tween(loseHead, { sx: .7, sy: 1.3 }, { time: 500, delay: 800, ease: 'inQuint' });
+  tween(loseHead, { y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(loseHands, { sx: .7, y: 960 + 500 }, { time: 1000, delay: 2200, ease: 'inQuart' }); tween(loseBody, { y: 960 + 500 + 230 }, { time: 1000, delay: 2200, ease: 'inQuart' });
+  if (!myTurn) { later(5000, () => snd('open_coin')); tween(machine, { y: 480 }, { time: 1500, delay: 3000 }); for (const s of [circ, amt]) { tween(s, { y: 480 - 262 + 25 }, { time: 1500, delay: 3000 }); tween(s, { rot: 360 }, { time: 2250, delay: 5000 }); }
+    await sleep(7250 + 1500); D.o.out = true; G.bank += D.o.val; G.round++; stats.b++; sv('stats', stats); if (G.opp.every((o) => o.out)) return finePartita(true); board(true); }
+  else { await sleep(4500); finePartita(false); }
 }
+window.__CL = { nuovaPartita, duello, caduta, apriProfilo, board, menu, get G() { return G; }, get D() { return D; } };
 function finePartita(all) {
   scr('sEnd'); const n = G.opp.filter((o) => o.out).length; const g = n >= 10 ? '10' : n >= 8 ? '8-9' : n >= 6 ? '6-7' : n >= 3 ? '3-5' : '1-2';
   place($('#eG'), 'screen5_sprite_hd/' + g + '_graphic'); $('#eH').style.backgroundImage = `url(${myPic()})`;
@@ -186,5 +213,8 @@ function finePartita(all) {
 }
 $('#eR').onclick = () => nuovaPartita();
 try { if (window.__logoQue && window.__logoQue(LANG) === 'ac') { $('#acLogo').style.display = 'block'; $('#acLogoI').src = window.__LOGO_AC; document.title = '¡Ahora Caigo! · Clásico'; } } catch (e) {}
+// desbloqueo de audio al primer toque (WebView/navegador): relanza la música pendiente
+addEventListener('pointerdown', () => { Object.values(SND).forEach((a) => { if (a.loop && a.paused && !mute && a.dataset.want) a.play().catch(() => {}); }); if (!window.__clUnlock) { window.__clUnlock = 1; if ($('#sMenu').classList.contains('on')) snd('intro-shorter'); } }, true);
+{ const v = document.createElement('div'); v.className = 'txt'; v.id = 'clVer'; v.style.cssText = 'left:6px;top:936px;font:12px Arial;opacity:.6;text-shadow:none'; v.textContent = 'v' + (window.CL_VERSION || '1.0.2'); $('#sMenu').appendChild(v); }
 menu();
 })();
