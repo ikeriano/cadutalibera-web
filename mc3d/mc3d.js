@@ -74,324 +74,224 @@
   const getBlob = k => tx('meta', 'readonly', st => req(st.get(k))).catch(() => null);
   async function borrar() { await tx('meta', 'readwrite', st => st.clear()); await tx('frames', 'readwrite', st => st.clear()); }
 
-  // ------------------------------------------------------------------ IA de profundidad
-  let motor = null;
-  function cargarMotor() {
-    if (motor) return motor;
-    motor = (async () => {
-      let w = null;
-      try {
-        w = new Worker(BASE + 'depth-worker.js', { type: 'module' });
-        const pend = new Map(); let id = 0;
-        w.onmessage = e => { const p = pend.get(e.data.id); if (p) { pend.delete(e.data.id); e.data.ok ? p[0](e.data) : p[1](new Error(e.data.error)); } };
-        const call = (m, tr) => new Promise((ok, ko) => { m.id = ++id; pend.set(m.id, [ok, ko]); w.postMessage(m, tr || []); });
-        await call({ tipo: 'init', base: BASE });
-        return { depth: (rgba, W, H) => call({ tipo: 'depth', rgba, w: W, h: H }, [rgba.buffer]) };
-      } catch (e) {
-        try { w && w.terminate(); } catch (_) { }
-        console.warn('[MC3D] worker no disponible, uso el hilo principal', e);
-        const m = await import(BASE + 'depth-worker.js'); await m.init(BASE);
-        return { depth: (rgba, W, H) => m.depth(rgba, W, H) };
-      }
+  // ------------------------------------------------------------------ IA: análisis del vídeo (planos, cámara, color, textos OCR, logo, audio)
+  const espera = (el, ev, ms) => new Promise((ok) => { const t = setTimeout(() => { el.removeEventListener(ev, f); ok(false); }, ms); const f = () => { clearTimeout(t); el.removeEventListener(ev, f); ok(true); }; el.addEventListener(ev, f); });
+  let ocrP = null;
+  function cargarOCR() {
+    if (ocrP) return ocrP;
+    ocrP = (async () => {
+      if (!window.Tesseract) await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = BASE + 'ocr/tesseract.min.js'; s.onload = ok; s.onerror = () => ko(new Error('OCR no disponible')); document.head.appendChild(s); });
+      return Tesseract.createWorker('spa', 1, { workerPath: BASE + 'ocr/worker.min.js', corePath: BASE + 'ocr/', langPath: BASE + 'ocr/', gzip: true, workerBlobURL: false, cacheMethod: 'none', logger: () => { } });
     })();
-    motor.catch(() => { motor = null; });
-    return motor;
+    ocrP.catch(() => { ocrP = null; });
+    return ocrP;
   }
-
-  // ------------------------------------------------------------------ conversión vídeo → escena 3D
-  const espera = (el, ev, ms) => new Promise((ok, ko) => { const t = setTimeout(() => { el.removeEventListener(ev, f); ok(false); }, ms); const f = () => { clearTimeout(t); el.removeEventListener(ev, f); ok(true); }; el.addEventListener(ev, f); });
-  async function convertir(file, desc, onProg, cancel) {
-    const p = interpretar(desc);
+  const limpia = s => s.replace(/[|_~^`´¨<>{}\[\]\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  // OCR: preparación de la imagen (gris, contraste, ampliada x2 y texto oscuro sobre claro) y limpieza de palabras
+  const pre = document.createElement('canvas');
+  function prepOCR(g, w, h, out) {
+    const W2 = Math.min(1920, w * 2), H2 = Math.round(h * W2 / w); out.width = W2; out.height = H2; const o = out.getContext('2d', { willReadFrequently: true });
+    o.imageSmoothingQuality = 'high'; o.drawImage(g.canvas, 0, 0, W2, H2); const id = o.getImageData(0, 0, W2, H2), d = id.data;
+    const hist = new Uint32Array(256); for (let i = 0; i < d.length; i += 4) { const l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0; d[i] = l; hist[l]++; }
+    let n = 0, lo = 0, hi = 255; const N = d.length / 4; for (let i = 0; i < 256; i++) { n += hist[i]; if (n < N * 0.02) lo = i; if (n < N * 0.98) hi = i; }
+    const k = 255 / Math.max(1, hi - lo); for (let i = 0; i < d.length; i += 4) { let l = (d[i] - lo) * k; l = l < 0 ? 0 : l > 255 ? 255 : l; l = 255 - l; l = l < 110 ? l * 0.5 : l > 170 ? 255 : l; d[i] = d[i + 1] = d[i + 2] = l; }
+    o.putImageData(id, 0, 0);
+  }
+  function prepRotulo(g, w, h, out) { // tercio inferior: rótulos de créditos (texto blanco sobre píldora de color)
+    const y0 = Math.round(h * 0.55), hh = h - y0, k = Math.min(3, 2400 / w); out.width = Math.round(w * k); out.height = Math.round(hh * k);
+    const o = out.getContext('2d', { willReadFrequently: true }); o.imageSmoothingQuality = 'high'; o.drawImage(g.canvas, 0, y0, w, hh, 0, 0, out.width, out.height);
+    const id = o.getImageData(0, 0, out.width, out.height), d = id.data; for (let i = 0; i < d.length; i += 4) { const v = Math.min(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = v > 185 ? 0 : 255; } o.putImageData(id, 0, 0);
+  }
+  // pequeño diccionario de créditos de tele para corregir palabras mal leídas (distancia de edición)
+  const DICC = 'presentador presentadora copresentador co-presentador presentado presentada juego creado creada con por de del la el los las y sonido musica música programa original originales antena versiones versión version similares plataforma virtual campeón campeon dirección direccion produccion producción realizacion realización guion guión edicion edición montaje camara cámara iluminacion iluminación decorados vestuario maquillaje regidor regidora concursante concursantes invitado invitada invitados colaborador colaboradora colaboradores especial nochebuena navidad nochevieja halloween verano temporada estreno gran final muy pronto nuevo nueva esta noche lunes martes miercoles miércoles jueves viernes sabado sábado domingo agradecimientos gracias basado basada minijuego scratch formato ahora caigo studio estudio roblox showtime españa juego'.split(' ');
+  const DN = DICC.map(w => [w, w.normalize('NFD').replace(/[\u0300-\u036f]/g, '')]);
+  const lev = (a, b) => { const m = a.length, n = b.length; if (Math.abs(m - n) > 2) return 9; let pr = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const cu = [i]; for (let j = 1; j <= n; j++) cu[j] = Math.min(pr[j] + 1, cu[j - 1] + 1, pr[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); pr = cu; } return pr[n]; };
+  function corrige(w) { // devuelve [palabra corregida, encontrada en el diccionario]
+    const base = w.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ-]/g, ''); if (base.length < 3) return [w, false];
+    const n = base.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let best = null, bd = 9; for (const [orig, nn] of DN) { const d = lev(n, nn); if (d < bd) { bd = d; best = orig; } }
+    const lim = n.length >= 8 ? 2 : n.length >= 5 ? 1 : 0;
+    if (best && bd <= lim) { let r = best; if (/^[A-ZÁÉÍÓÚÑ]/.test(base)) r = r[0].toUpperCase() + r.slice(1); if (base === base.toUpperCase() && base.length > 1) r = r.toUpperCase(); return [w.replace(base, r), true]; }
+    return [w, false];
+  }
+  const CORTAS = new Set(['y', 'a', 'o', 'e', 'u', 'de', 'la', 'el', 'en', 'tu', 'tv', 'mi', 'si', 'ya', 'al', 'lo', 'es', 'un', 'hd', 'no', 'se', 'te', 'me', 'le', 'su', 'yo', 'va', 'ha', 'he', 'ir', 'ni', 'os', 'nos', 'los', 'las', 'del', 'por', 'con', 'que', 'una', 'mas', 'muy', 'hoy', 'sin', 'sus', 'ver', 'dia', 'pre', 'ya']);
+  const limpiaPal = w => w.replace(/^[^\wÁÉÍÓÚÑáéíóúñ¡¿#@(«"]+|[^\wÁÉÍÓÚÑáéíóúñ!?)»".,:]+$/g, '').replace(/[|_]{2,}/g, '');
+  function palabraOK(t, c) {
+    const w = limpiaPal(t || ''); if (!w) return false;
+    const letras = (w.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]/g) || []).length; if (letras / w.length < 0.7) return false;
+    const n = w.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+    if (n.length <= 3 && !CORTAS.has(n) && !/^\d+$/.test(n)) return c >= 93 && /^[A-Z]/.test(w) && n.length === 3;
+    if (/(.)\1\1/.test(n)) return false; // «lll», «ooo»: basura típica del OCR
+    if (!/[aeiouy]/.test(n) && !/^\d+$/.test(n) && !/[_0-9]/.test(w)) return false; // sin vocales: no es castellano
+    if (corrige(w)[1]) return true;
+    if (/[_]|[a-z][A-Z]/.test(w) && n.length >= 6) return c >= 35; // nombres de usuario: Only_Marco, MikeyTheCat_Official
+    return c >= (n.length >= 6 ? 55 : 70);
+  }
+  const conj = s => new Set(s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9_]+/).filter(Boolean));
+  const jac = (a, b) => { const A = conj(a), B = conj(b); let i = 0; A.forEach(x => B.has(x) && i++); return i / Math.max(1, A.size + B.size - i); };
+  function juntaVistas(vistas) { // una línea vale si se lee en 2 fotogramas del plano (o una vez con mucha confianza)
+    const todas = vistas.flatMap((L, f) => L.map((l, i) => ({ ...l, f, i }))), out = [];
+    for (const l of todas.slice().sort((a, b) => b.c - a.c)) {
+      if (out.some(o => jac(o.txt, l.txt) >= 0.5)) continue;
+      const vistoEn = new Set(todas.filter(o => jac(o.txt, l.txt) >= 0.5).map(o => o.f));
+      if (vistoEn.size >= 2 || l.c >= 75) out.push(l);
+    }
+    return out.sort((a, b) => a.f - b.f || a.i - b.i);
+  }
+  async function analizar(file, desc, onProg, cancel) {
     const url = URL.createObjectURL(file);
-    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
-    v.setAttribute('playsinline', ''); v.style.cssText = 'position:fixed;left:-9999px;width:2px;height:2px';
-    document.body.appendChild(v);
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url; v.setAttribute('playsinline', '');
+    v.style.cssText = 'position:fixed;left:-9999px;width:2px;height:2px'; document.body.appendChild(v);
+    const t0 = performance.now();
     try {
       if (!(await espera(v, 'loadedmetadata', 15000)) && !v.videoWidth) throw new Error('No puedo leer ese vídeo. Prueba con un MP4 (H.264).');
       if (!v.videoWidth) await espera(v, 'loadeddata', 8000);
-      const dur0 = isFinite(v.duration) && v.duration > 0 ? v.duration : 20;
-      const dur = Math.min(dur0, p.dur || 45);
-      const fps = Math.max(4, Math.min(12, Math.floor(360 / dur)));
-      const n = Math.max(2, Math.floor(dur * fps));
-      const vw = v.videoWidth, vh = v.videoHeight, asp = vw / vh;
-      const CW = Math.min(720, vw), CH = Math.round(CW / asp);
-      const lado = { rapida: 196, normal: 294, alta: 392 }[p.calidad] || 294;
-      let dw, dh; if (asp >= 1) { dw = lado; dh = Math.max(56, Math.round(lado / asp / 14) * 14); } else { dh = lado; dw = Math.max(56, Math.round(lado * asp / 14) * 14); }
-      onProg && onProg({ fase: 'ia', txt: 'Cargando la IA de profundidad…', f: 0 });
-      const ia = await cargarMotor();
-      const cc = document.createElement('canvas'); cc.width = CW; cc.height = CH; const gc = cc.getContext('2d', { willReadFrequently: true });
-      const dc = document.createElement('canvas'); dc.width = dw; dc.height = dh; const gd = dc.getContext('2d', { willReadFrequently: true });
-      await borrar();
-      let prev = null, lo = null, hi = null; const t0 = performance.now();
-      const deps = new Array(n);
+      const dur0 = isFinite(v.duration) && v.duration > 0 ? v.duration : 20, dur = Math.min(dur0, 90);
+      const FPS = 5, n = Math.max(2, Math.floor(dur * FPS)), W = 64, H = 36;
+      const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d', { willReadFrequently: true });
+      const big = document.createElement('canvas'); big.width = Math.min(960, v.videoWidth); big.height = Math.round(big.width * v.videoHeight / v.videoWidth); const gb = big.getContext('2d', { willReadFrequently: true });
+      const fr = []; let prev = null;
+      const sad = (a, b, dx, dy, s) => { let e = 0, k = 0; for (let y = 4; y < H - 4; y += 2) for (let x = 4; x < W - 4; x += 2) { const xs = Math.round((x - W / 2) * s + W / 2 + dx), ys = Math.round((y - H / 2) * s + H / 2 + dy); if (xs < 0 || ys < 0 || xs >= W || ys >= H) continue; e += Math.abs(a[y * W + x] - b[ys * W + xs]); k++; } return e / Math.max(1, k); };
       for (let i = 0; i < n; i++) {
         if (cancel && cancel.no) throw new Error('cancelado');
-        const t = Math.min(dur0 - 0.05, i / fps + 0.001);
-        v.currentTime = t; await espera(v, 'seeked', 4000);
-        gc.drawImage(v, 0, 0, CW, CH);
-        const jpg = await new Promise(ok => cc.toBlob(ok, 'image/jpeg', 0.82));
-        let dep;
-        if (i % 2 === 0 || i === n - 1) {
-          gd.drawImage(v, 0, 0, dw, dh);
-          const rgba = new Uint8ClampedArray(gd.getImageData(0, 0, dw, dh).data);
-          const r = await ia.depth(rgba, dw, dh);
-          const a = r.data; let mn = Infinity, mx = -Infinity;
-          for (let k = 0; k < a.length; k += 7) { const x = a[k]; if (x < mn) mn = x; if (x > mx) mx = x; }
-          lo = lo == null ? mn : lo * 0.6 + mn * 0.4; hi = hi == null ? mx : hi * 0.6 + mx * 0.4; // rango suavizado: sin parpadeo
-          const sc = 255 / Math.max(1e-6, hi - lo); dep = new Uint8Array(a.length);
-          for (let k = 0; k < a.length; k++) { let x = (a[k] - lo) * sc; x = x < 0 ? 0 : x > 255 ? 255 : x; dep[k] = prev ? (x * 0.75 + prev[k] * 0.25) : x; }
-          prev = dep; dep.w = r.w; dep.h = r.h;
-          if (i >= 2 && !deps[i - 1]) { const a0 = deps[i - 2], m = new Uint8Array(dep.length); for (let k = 0; k < m.length; k++) m[k] = (a0[k] + dep[k]) >> 1; deps[i - 1] = m; await tx('frames', 'readwrite', st => st.put({ jpg: deps.jpgPend, dep: m }, i - 1)); }
-          deps[i] = dep;
-          await tx('frames', 'readwrite', st => st.put({ jpg, dep }, i));
-          if (onProg) { const el = (performance.now() - t0) / 1000, rest = el / (i + 1) * (n - i - 1); onProg({ fase: 'conv', f: (i + 1) / n, i, n, txt: `Convirtiendo a 3D: fotograma ${i + 1} de ${n} · quedan ~${rest < 60 ? Math.ceil(rest) + ' s' : Math.ceil(rest / 60) + ' min'}`, dep, dw: r.w, dh: r.h, img: cc }); }
-        } else { deps.jpgPend = jpg; }
+        v.currentTime = Math.min(dur0 - 0.05, i / FPS + 0.01); await espera(v, 'seeked', 4000);
+        g.drawImage(v, 0, 0, W, H); const d = g.getImageData(0, 0, W, H).data;
+        const gr = new Float32Array(W * H), hist = new Float32Array(64); let R = 0, G = 0, B = 0, L = 0, S = 0;
+        for (let k = 0; k < W * H; k++) { const r = d[k * 4], gg = d[k * 4 + 1], b = d[k * 4 + 2]; const l = 0.299 * r + 0.587 * gg + 0.114 * b; gr[k] = l; L += l; R += r; G += gg; B += b; S += Math.max(r, gg, b) - Math.min(r, gg, b); hist[(r >> 6) * 16 + (gg >> 6) * 4 + (b >> 6)]++; }
+        const N = W * H; for (let k = 0; k < 64; k++) hist[k] /= N;
+        const f = { t: i / FPS, luz: L / N, rgb: [R / N, G / N, B / N], sat: S / N, hist, gr, dx: 0, dy: 0, ds: 1, corte: false };
+        if (prev) {
+          let hd = 0; for (let k = 0; k < 64; k++) hd += Math.abs(hist[k] - prev.hist[k]);
+          let best = [1e9, 0, 0, 1];
+          for (const s of [0.96, 1, 1.04]) for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { const e = sad(prev.gr, gr, dx, dy, s); if (e < best[0]) best = [e, dx, dy, s]; }
+          f.dx = best[1]; f.dy = best[2]; f.ds = best[3]; f.err = best[0]; f.hd = hd;
+          f.corte = hd > 0.55 || best[0] > 38;
+          f.flash = f.luz - prev.luz > 45;
+        }
+        fr.push(f); prev = f;
+        onProg && onProg({ f: (i + 1) / n * 0.55, txt: `Analizando planos y movimientos de cámara: ${i + 1} de ${n}`, img: (i % 5 === 0) ? (gb.drawImage(v, 0, 0, big.width, big.height), big) : null });
       }
-      const dW = deps[0].w || dw, dH = deps[0].h || dh;
-      let audio = false;
-      if (file.size < 160e6) { await tx('meta', 'readwrite', st => st.put(file, 'video')); audio = true; }
-      const meta = { v: 1, nombre: file.name || 'vídeo', desc, fps, n, dur: n / fps, w: CW, h: CH, dw: dW, dh: dH, audio, fecha: Date.now(), seg: Math.round((performance.now() - t0) / 1000) };
-      await tx('meta', 'readwrite', st => st.put(meta, 'meta'));
+      // planos (cortes con duración mínima 0,6 s)
+      const planos = []; let ini = 0;
+      for (let i = 1; i <= fr.length; i++) if (i === fr.length || (fr[i].corte && fr[i].t - fr[ini].t >= 0.6)) { planos.push(fr.slice(ini, i)); ini = i; }
+      const tomas = planos.map((P, k) => {
+        const m = (key) => P.slice(1).reduce((s, f) => s + f[key], 0) / Math.max(1, P.length - 1);
+        const t0p = P[0].t, t1p = k + 1 < planos.length ? planos[k + 1][0].t : dur;
+        return { t0: t0p, t1: t1p, dx: m('dx'), dy: m('dy'), ds: P.length > 1 ? P.slice(1).reduce((s, f) => s + (f.ds - 1), 0) / (P.length - 1) : 0, luz: P.reduce((s, f) => s + f.luz, 0) / P.length, rgb: [0, 1, 2].map(j => P.reduce((s, f) => s + f.rgb[j], 0) / P.length), sat: P.reduce((s, f) => s + f.sat, 0) / P.length, flash: P.some(f => f.flash), textos: [], logo: false };
+      });
+      // OCR de textos y títulos (un fotograma por plano)
+      let ocr = null; try { onProg && onProg({ f: 0.57, txt: 'Cargando la IA de lectura de textos (OCR)…' }); ocr = await cargarOCR(); } catch (e) { console.warn('[MC3D] OCR', e); }
+      const palabrasLogo = (CFG.palabrasLogo || String(CFG.nombre).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/).filter(w => w.length > 2)).concat(['ahora', 'caigo', 'caduta', 'libera', 'pasapalabra', 'cazador', 'millonario', 'boom', 'acerte', 'caia', 'atrapa']); // el vídeo puede ser de otro juego de la familia
+      for (let k = 0; k < tomas.length; k++) {
+        if (cancel && cancel.no) throw new Error('cancelado');
+        const T = tomas[k]; if (!ocr) break;
+        const vistas = []; // líneas leídas en cada fotograma: se juntan los fotogramas seguidos del mismo plano
+        for (const fr2 of [0.3, 0.55, 0.8]) {
+          v.currentTime = Math.min(dur0 - 0.05, T.t0 + (T.t1 - T.t0) * fr2); await espera(v, 'seeked', 4000);
+          gb.drawImage(v, 0, 0, big.width, big.height);
+          for (const modo of fr2 === 0.55 ? ['rotulo', 'entero'] : ['rotulo']) {
+            if (modo === 'rotulo') prepRotulo(gb, big.width, big.height, pre); else prepOCR(gb, big.width, big.height, pre);
+            try {
+              const r = await ocr.recognize(pre); const lin = [];
+              for (const ln of (r.data.lines || [])) {
+                const ws = (ln.words || []).filter(w => palabraOK(w.text, w.confidence)).map(w => { const [t, dic] = corrige(limpiaPal(w.text)); return { t, c: dic ? Math.max(w.confidence, 80) : w.confidence }; });
+                if (ws.length && ws.reduce((a, w) => a + w.c, 0) / ws.length >= 55 && ws.map(w => w.t).join('').length >= 3) lin.push({ txt: ws.map(w => w.t).join(' '), c: ws.reduce((a, w) => a + w.c, 0) / ws.length, crudo: limpia(ln.text), modo });
+              }
+              vistas.push(lin);
+            } catch (e) { vistas.push([]); }
+          }
+          onProg && onProg({ f: 0.57 + 0.35 * (k + fr2) / tomas.length, txt: `Leyendo textos y logos (OCR): plano ${k + 1} de ${tomas.length}`, img: pre });
+        }
+        T.crudo = vistas.flat().map(l => l.crudo);
+        const jv = juntaVistas(vistas);
+        T.rot = jv.filter(o => o.modo === 'rotulo'); T.textos = jv.filter(o => o.modo !== 'rotulo').map(o => o.txt);
+        const norm = T.crudo.concat(T.textos).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        T.logo = palabrasLogo.length > 0 && palabrasLogo.some(w => norm.includes(w));
+        if (T.logo) T.textos = T.textos.filter(x => !palabrasLogo.some(w => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(w)));
+      }
+      // textos fijos en pantalla (mosca, «muy pronto», hashtag…): palabras que salen en muchos planos se quitan de los rótulos
+      const nw = w => w.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9#_]/g, '');
+      const nl = x => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+      const dl = {}; tomas.forEach(T => new Set((T.rot || []).map(o => nl(o.txt))).forEach(x => dl[x] = (dl[x] || 0) + 1));
+      const df = {}; tomas.forEach(T => new Set(T.textos.join(' ').split(/\s+/).map(nw).filter(w => w.length > 1)).forEach(w => df[w] = (df[w] || 0) + 1));
+      const fija = w => tomas.length >= 3 && (df[nw(w)] || 0) >= Math.max(2, tomas.length * 0.3);
+      let hashtagV = null;
+      for (const T of tomas) {
+        for (const x of T.textos) { const h = x.match(/#\s?[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{4,}/); if (h && !hashtagV) hashtagV = h[0].replace(/\s/g, ''); }
+        const lim = T.textos.map(x => x.split(/\s+/).filter(w => !/^#/.test(w) && !fija(w) && /[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{2}/.test(w)).join(' ')).filter(x => (x.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g) || []).length >= 4);
+        // rótulos del tercio inferior: se quitan solo líneas enteras que se repiten en muchos planos (mosca, «muy pronto»)
+        const rot = (T.rot || []).filter(o => !(tomas.length >= 3 && dl[nl(o.txt)] >= Math.max(2, tomas.length * 0.3)) && (o.txt.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g) || []).length >= 5 && !/^#/.test(o.txt));
+        // cada fotograma con rótulo = un rótulo (título + nombre); varios rótulos distintos en el mismo plano salen uno tras otro
+        const grupos = []; for (const f of [...new Set(rot.map(o => o.f))].sort()) { const tx = rot.filter(o => o.f === f).map(o => o.txt).join(' ').replace(/\s+/g, ' ').slice(0, 60); if (!grupos.some(g => jac(g, tx) >= 0.5)) grupos.push(tx); }
+        T.textos = grupos.length ? grupos : lim.length ? [lim.join(' ').slice(0, 60)] : [];
+      }
+      // audio: golpes (picos de energía) para sincronizar cortes, luces y efectos
+      let golpes = [], audio = false;
+      try {
+        onProg && onProg({ f: 0.94, txt: 'Analizando la música y el sonido…' });
+        if (file.size < 120e6) {
+          const AC = window.AudioContext || window.webkitAudioContext; const ctx = new AC();
+          const buf = await new Promise((ok, ko) => { file.arrayBuffer().then(ab => ctx.decodeAudioData(ab, ok, ko)).catch(ko); });
+          const ch = buf.getChannelData(0), hop = Math.round(buf.sampleRate * 0.02), env = [];
+          for (let i = 0; i + hop < ch.length; i += hop) { let e = 0; for (let j = 0; j < hop; j += 4) e += ch[i + j] * ch[i + j]; env.push(Math.sqrt(e / (hop / 4))); }
+          const mean = env.reduce((a, b) => a + b, 0) / env.length; let ult = -1;
+          for (let i = 12; i < env.length; i++) { let loc = 0; for (let j = i - 12; j < i; j++) loc += env[j]; loc /= 12; if (env[i] > loc * 1.7 && env[i] > mean * 1.1 && i - ult > 12) { golpes.push(+(i * 0.02).toFixed(2)); ult = i; } }
+          audio = mean > 0.002; ctx.close && ctx.close();
+        }
+      } catch (e) { console.warn('[MC3D] audio', e); audio = true; }
+      const guion = { v: 2, nombre: file.name || 'vídeo', desc, dur, hashtag: hashtagV, w: v.videoWidth, h: v.videoHeight, tomas, golpes, audio, fecha: Date.now(), seg: Math.round((performance.now() - t0) / 1000) };
+      await borrar();
+      if (file.size < 200e6) await tx('meta', 'readwrite', st => st.put(file, 'video')); else guion.audio = false;
+      await tx('meta', 'readwrite', st => st.put(guion, 'meta'));
       try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }
-      return meta;
+      return guion;
     } finally { v.removeAttribute('src'); v.load(); v.remove(); URL.revokeObjectURL(url); }
   }
 
-  // ------------------------------------------------------------------ reproductor WebGL2
-  const hex = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
-  const VS_MALLA = `#version 300 es
-  precision highp float; in vec2 aUV; uniform sampler2D uD0,uD1; uniform float uMix,uRel,uAsp,uExp,uT,uPx; uniform mat4 uPV;
-  out vec2 vUV; out vec3 vP; out float vD;
-  float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
-  float dep(vec2 uv){return mix(texture(uD0,uv).r,texture(uD1,uv).r,uMix);}
-  void main(){ vUV=aUV; float d=dep(aUV); vD=d;
-    vec3 p=vec3((aUV.x-.5)*2.*uAsp,(aUV.y-.5)*2.,(d-.45)*uRel);
-    if(uExp>0.){ vec3 r=vec3(h(aUV)-.5,h(aUV+3.1)-.5,h(aUV+7.7)+.2); p+=r*uExp*(2.5+d*2.)+vec3(0.,-uExp*uExp*.8,0.); }
-    vP=p; vec4 c=uPV*vec4(p,1.); gl_Position=c; gl_PointSize=max(1.,uPx/c.w); }`;
-  const FS_MALLA = `#version 300 es
-  precision highp float; in vec2 vUV; in vec3 vP; in float vD; uniform sampler2D uC0,uC1; uniform float uMix,uT,uLuz,uModo,uNie,uGrid,uExp;
-  uniform vec3 uL1,uL2,uNiebla; out vec4 o;
-  void main(){ vec3 c=mix(texture(uC0,vUV).rgb,texture(uC1,vUV).rgb,uMix);
-    vec3 n=normalize(cross(dFdx(vP),dFdy(vP))); if(n.z<0.)n=-n;
-    vec3 l1=normalize(vec3(sin(uT*.7)*1.5,1.2,1.6)), l2=normalize(vec3(-cos(uT*.5)*1.6,-.4,1.2));
-    float k1=max(dot(n,l1),0.), k2=max(dot(n,l2),0.); float sp=pow(max(dot(n,normalize(l1+vec3(0,0,1))),0.),24.);
-    vec3 lit=c*(.55+.6*k1)+uL1*k1*.35+uL2*k2*.45+sp*.25;
-    c=mix(c,lit,uLuz);
-    float stretch=clamp(length(fwidth(vP.z))*6.,0.,1.); c*=1.-stretch*.35;
-    if(uModo>1.5){ vec2 g=abs(fract(vUV*uGrid)-.5); float w=smoothstep(.42,.5,max(g.x,g.y)); c=mix(c*.18,uL1*1.4+c*.6,w); if(uModo>2.5){c=vec3(.3,.9,1.)*(dot(c,vec3(.33))*1.3+w*.6);} }
-    if(uModo>0.5&&uModo<1.5){ vec2 q=gl_PointCoord-.5; if(dot(q,q)>.25)discard; }
-    float f=clamp((1.-vD)*uNie,0.,1.); c=mix(c,uNiebla,f*.8);
-    o=vec4(c,uModo>2.5?.85:1.); }`;
-  const VS_PART = `#version 300 es
-  precision highp float; in vec3 aS; uniform float uT,uTipo,uPx; uniform mat4 uPV; out vec3 vC; out float vA;
-  float h(float x){return fract(sin(x*91.17)*43758.5453);}
-  void main(){ float s=aS.x,s2=aS.y,s3=aS.z; vec3 p; vA=1.; float sz=6.;
-    if(uTipo<.5){ p=vec3((s-.5)*7.,2.5-mod(uT*.25*(.5+s2)+s3*5.,5.),(s2-.5)*3.+.6); p.x+=sin(uT+s3*6.)*.15; vC=vec3(1.); sz=5.+s2*5.; }
-    else if(uTipo<1.5){ p=vec3((s-.5)*7.,2.5-mod(uT*3.*(.7+s2)+s3*5.,5.),(s2-.5)*3.+.6); vC=vec3(.7,.8,1.); vA=.55; sz=2.5; }
-    else if(uTipo<2.5){ float ph=mod(uT*.6+s3,1.); float a=s*6.283; vec3 c0=vec3((h(floor(uT*.6+s3)+s)-.5)*3.,(h(floor(uT*.6+s3)+s2*3.)-.2)*1.6,1.); p=c0+vec3(cos(a)*s2,sin(a)*s2,(s3-.5))*ph*1.6+vec3(0.,-ph*ph*.8,0.); vC=mix(vec3(1.,.85,.3),vec3(1.,.3,.1),ph); vA=1.-ph; sz=4.; }
-    else if(uTipo<3.5){ p=vec3((s-.5)*7.,2.6-mod(uT*.6*(.6+s2)+s3*5.,5.2),(s2-.5)*3.+.6); p.x+=sin(uT*3.+s3*9.)*.12; vC=vec3(h(s*7.),h(s2*5.),h(s3*3.)); vC=normalize(vC+.05)*1.3; sz=7.; }
-    else if(uTipo<4.5){ p=vec3((s-.5)*16.,(s2-.5)*10.,-3.-s3*6.); vC=vec3(1.,.95,.85); vA=.5+.5*sin(uT*3.+s*40.); sz=2.+s3*3.; }
-    else if(uTipo<5.5){ p=vec3((s-.5)*6.,-2.5+mod(uT*.35*(.5+s2)+s3*5.,5.),(s2-.5)*2.5+.7); p.x+=sin(uT*1.5+s3*6.)*.2; vC=vec3(.7,.9,1.); vA=.6; sz=8.+s2*10.; }
-    else { float ph=mod(uT*.5*(.6+s2)+s3,1.); p=vec3((s-.5)*6.+sin(uT*2.+s*20.)*.1*ph,-1.3+ph*2.6,(s2-.5)*2.+.8); vC=mix(vec3(1.,.9,.3),vec3(1.,.2,.0),ph); vA=1.-ph; sz=6.*(1.-ph)+2.; }
-    vec4 c=uPV*vec4(p,1.); gl_Position=c; gl_PointSize=sz*uPx/c.w; }`;
-  const FS_PART = `#version 300 es
-  precision highp float; in vec3 vC; in float vA; out vec4 o; void main(){ vec2 q=gl_PointCoord-.5; float r=dot(q,q); if(r>.25)discard; o=vec4(vC,vA*(1.-r*4.)); }`;
-  const VS_Q = `#version 300 es
-  in vec2 aP; out vec2 vUV; void main(){ vUV=aP*.5+.5; gl_Position=vec4(aP,0.,1.); }`;
-  const FS_POST = `#version 300 es
-  precision highp float; in vec2 vUV; uniform sampler2D uS; uniform float uT,uFade,uEst,uBrillo,uGlitch,uVhs,uVin,uCine,uSat; uniform vec3 uTint,uTint2; uniform vec2 uRes; out vec4 o;
-  float h(float x){return fract(sin(x*91.17)*43758.5453);}
-  void main(){ vec2 uv=vUV; float g=0.;
-    if(uGlitch>0.){ float b=floor(uv.y*24.+floor(uT*9.)); float on=step(.93,h(b+floor(uT*7.)))*uGlitch; uv.x+=(h(b)-.5)*.08*on; g=on; }
-    if(uVhs>0.) uv.x+=sin(uv.y*300.+uT*20.)*.0008*uVhs;
-    float sh=(.002+g*.012)*(uGlitch+uVhs*.5);
-    vec3 c=vec3(texture(uS,uv+vec2(sh,0)).r,texture(uS,uv).g,texture(uS,uv-vec2(sh,0)).b);
-    if(uBrillo>0.){ vec3 b=textureLod(uS,uv,3.).rgb*.5+textureLod(uS,uv,5.).rgb*.5; c+=max(b-.55,0.)*uBrillo*2.2; }
-    float l=dot(c,vec3(.299,.587,.114));
-    if(uEst<.5){} else if(uEst<1.5) c=vec3(l); else if(uEst<2.5) c=vec3(l)*vec3(1.1,.92,.7);
-    else if(uEst<3.5){ c=mix(vec3(l),c,1.8); c=pow(c,vec3(1.15)); c+=uTint*pow(l,3.)*.6; }
-    else if(uEst<4.5) c*=vec3(1.12,.98,.82); else if(uEst<5.5) c*=vec3(.82,.95,1.15); else c*=.7;
-    c=mix(vec3(dot(c,vec3(.333))),c,uSat);
-    c=mix(c,c*mix(uTint,uTint2,uv.y)*1.25,.38*step(.01,dot(uTint,uTint)));
-    if(uCine>0.){ c=(c-.5)*1.12+.5; if(abs(uv.y-.5)>.41) c=vec3(0.); }
-    if(uVhs>0.){ c*=.88+.12*sin(uv.y*uRes.y*1.6); c+=(h(uv.y*uRes.y+uT*60.)-.5)*.05*uVhs; }
-    if(uVin>0.){ vec2 q=uv-.5; c*=1.-dot(q,q)*1.6*uVin; }
-    o=vec4(clamp(c,0.,1.)*uFade,1.); }`;
-
-  function prog(gl, vs, fs) {
-    const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
-    const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    const u = {}; const nu = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); for (let i = 0; i < nu; i++) { const a = gl.getActiveUniform(p, i); u[a.name] = gl.getUniformLocation(p, a.name); }
-    return { p, u };
-  }
-  // matrices
-  const persp = (f, a, n, fa) => { const t = 1 / Math.tan(f / 2); return [t / a, 0, 0, 0, 0, t, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, 2 * fa * n / (n - fa), 0]; };
-  function lookAt(e, c, up) {
-    let z = [e[0] - c[0], e[1] - c[1], e[2] - c[2]]; let l = Math.hypot(...z); z = z.map(x => x / l);
-    let x = [up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2], up[0] * z[1] - up[1] * z[0]]; l = Math.hypot(...x); x = x.map(v => v / l);
-    const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
-    return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -(x[0] * e[0] + x[1] * e[1] + x[2] * e[2]), -(y[0] * e[0] + y[1] * e[1] + y[2] * e[2]), -(z[0] * e[0] + z[1] * e[1] + z[2] * e[2]), 1];
-  }
-  const mul = (a, b) => { const o = new Array(16); for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + j] * b[i * 4 + k]; o[i * 4 + j] = s; } return o; };
-  const ss = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
-  function camara(modo, u, T, asp) { // u: 0..1 dentro del tramo
-    const D = 2.55 / Math.min(1, asp > 1 ? 1 : asp) ; const e = ss(u);
-    switch (modo) {
-      case 'orbita': { const a = Math.sin(u * Math.PI * 2 * 0.5 - Math.PI / 2) * 0.55; return { e: [Math.sin(a) * D, 0.15, Math.cos(a) * D], c: [0, 0, 0], r: 0 }; }
-      case 'acercar': { const d = 3.4 - 1.65 * e; return { e: [0.25 * (1 - e), 0.18 * (1 - e) + 0.05, d], c: [0, 0, 0.1 * e], r: 0 }; }
-      case 'alejar': { const d = 1.6 + 1.9 * e; return { e: [-0.2 * e, 0.1, d], c: [0, 0, 0], r: 0 }; }
-      case 'lateral': { const x = -0.95 + 1.9 * e; return { e: [x, 0.05, D * 0.92], c: [x * 0.35, 0, 0], r: 0 }; }
-      case 'vuelo': { const d = 3.6 - 2.1 * e; const a = Math.sin(u * Math.PI * 1.5) * 0.45; return { e: [Math.sin(a) * d, 0.6 * (1 - e) + Math.sin(u * 9) * 0.05, Math.cos(a) * d], c: [0, 0, 0], r: Math.sin(u * Math.PI * 2) * 0.08 }; }
-      case 'grua': { const pt = 1.05 * (1 - e) + 0.08; return { e: [0, Math.sin(pt) * D, Math.cos(pt) * D], c: [0, 0, 0], r: 0 }; }
-      default: { return { e: [Math.sin(T * 0.4) * 0.06, Math.sin(T * 0.3) * 0.04, D], c: [0, 0, 0], r: 0 }; }
-    }
-  }
-  function camTotal(p, u, T, asp) {
-    const L = p.camaras, n = L.length, x = Math.min(0.9999, u) * n, i = Math.floor(x), f = x - i;
-    let a = camara(L[i], f, T, asp);
-    const blend = 0.18;
-    if (i + 1 < n && f > 1 - blend) { const b = camara(L[i + 1], 0, T, asp), w = ss((f - (1 - blend)) / blend); a = { e: a.e.map((v, k) => v + (b.e[k] - v) * w), c: a.c.map((v, k) => v + (b.c[k] - v) * w), r: a.r + (b.r - a.r) * w }; }
-    if (p.temblor) { const s = 0.025; a.e = a.e.map((v, k) => v + (Math.sin(T * 23 + k * 7) + Math.sin(T * 31 + k)) * s); }
-    return a;
-  }
-
-  async function reproducir(opc = {}) {
-    const meta = await getMeta(); if (!meta) return false;
-    const p = interpretar(opc.desc != null ? opc.desc : meta.desc);
-    const frames = await tx('frames', 'readonly', st => req(st.getAll()));
-    const vid = meta.audio && !p.mudo ? await getBlob('video') : null;
-    return new Promise(async (fin) => {
-      const ov = document.createElement('div');
-      ov.id = 'mc3dIntro'; ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#000;touch-action:none';
-      const cv = document.createElement('canvas'); cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
-      const c2 = document.createElement('canvas'); c2.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none';
-      const sk = document.createElement('button'); sk.textContent = 'Saltar ⏭'; sk.style.cssText = 'position:absolute;right:18px;top:16px;font:700 16px system-ui;padding:8px 16px;border-radius:20px;border:2px solid #fff8;background:#0008;color:#fff;cursor:pointer;z-index:2';
-      ov.append(cv, c2, sk); document.body.appendChild(ov);
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const rs = () => { for (const c of [cv, c2]) { c.width = Math.round(ov.clientWidth * dpr); c.height = Math.round(ov.clientHeight * dpr); } };
-      rs(); window.addEventListener('resize', rs);
-      const gl = cv.getContext('webgl2', { antialias: true, alpha: false, preserveDrawingBuffer: !!opc.captura });
-      let vivo = true, audio = null, aurl = null; const bm = new Map();
-      const acabar = () => { if (!vivo) return; vivo = false; window.removeEventListener('resize', rs); try { audio && audio.pause(); } catch (e) { } if (aurl) URL.revokeObjectURL(aurl); for (const b of bm.values()) b && b.close && b.close(); ov.remove(); fin(true); };
-      sk.onclick = e => { e.stopPropagation(); acabar(); };
-      if (!gl) { alert('Este dispositivo no tiene WebGL2: no puedo reproducir la cabecera 3D.'); return acabar(); }
-      gl.getExtension('EXT_color_buffer_float');
-      const PM = prog(gl, VS_MALLA, FS_MALLA), PP = prog(gl, VS_PART, FS_PART), PQ = prog(gl, VS_Q, FS_POST);
-      // malla
-      const asp = meta.w / meta.h, GX = 220, GY = Math.max(40, Math.round(GX / asp));
-      const uv = new Float32Array((GX + 1) * (GY + 1) * 2); let k = 0; for (let y = 0; y <= GY; y++) for (let x = 0; x <= GX; x++) { uv[k++] = x / GX; uv[k++] = y / GY; }
-      const ix = new Uint32Array(GX * GY * 6); k = 0; for (let y = 0; y < GY; y++) for (let x = 0; x < GX; x++) { const a = y * (GX + 1) + x, b = a + 1, c = a + GX + 1, d = c + 1; ix.set([a, b, c, b, d, c], k); k += 6; }
-      const vaoM = gl.createVertexArray(); gl.bindVertexArray(vaoM);
-      let b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
-      let loc = gl.getAttribLocation(PM.p, 'aUV'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      b = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ix, gl.STATIC_DRAW);
-      // nube de puntos más densa
-      const PX = Math.min(meta.dw * 2, 420), PY = Math.round(PX / asp); const uvp = new Float32Array(PX * PY * 2); k = 0; for (let y = 0; y < PY; y++) for (let x = 0; x < PX; x++) { uvp[k++] = (x + .5) / PX; uvp[k++] = (y + .5) / PY; }
-      const vaoP = gl.createVertexArray(); gl.bindVertexArray(vaoP); b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, uvp, gl.STATIC_DRAW); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      // partículas
-      const NP = 900, sd = new Float32Array(NP * 3); for (let i = 0; i < sd.length; i++) sd[i] = Math.random();
-      const vaoS = gl.createVertexArray(); gl.bindVertexArray(vaoS); b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, sd, gl.STATIC_DRAW);
-      loc = gl.getAttribLocation(PP.p, 'aS'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-      const vaoQ = gl.createVertexArray(); gl.bindVertexArray(vaoQ); b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      loc = gl.getAttribLocation(PQ.p, 'aP'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      gl.bindVertexArray(null);
-      const tex = (lin = true) => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); for (const [a, v] of [[gl.TEXTURE_MIN_FILTER, lin ? gl.LINEAR : gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, a, v); return t; };
-      const tC = [tex(), tex()], tD = [tex(), tex()];
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      const subeD = (t, d) => { gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); const fl = new Uint8Array(d.length); const W = meta.dw, H = meta.dh; for (let y = 0; y < H; y++) fl.set(d.subarray((H - 1 - y) * W, (H - y) * W), y * W); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, W, H, 0, gl.RED, gl.UNSIGNED_BYTE, fl); };
-      const subeC = (t, im) => { gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); };
-      // FBO con mipmaps para el brillo
-      let fbo = null, ftex = null, fW = 0, fH = 0, rb = null;
-      const preparaFbo = () => { if (fW === cv.width && fH === cv.height) return; fW = cv.width; fH = cv.height; ftex = ftex || gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, ftex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fW, fH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); rb = rb || gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, rb); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, fW, fH); fbo = fbo || gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ftex, 0); gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb); };
-      // fotogramas: decodificación por delante
-      const N = frames.length;
-      const pide = i => { if (i < 0 || i >= N || bm.has(i)) return; bm.set(i, null); createImageBitmap(frames[i].jpg, { imageOrientation: 'flipY' }).then(x => { if (!vivo) return x.close && x.close(); bm.set(i, x); }).catch(() => { }); };
-      for (let i = 0; i < Math.min(N, 10); i++) pide(i);
-      await new Promise(r => { const t0 = performance.now(); const w = () => (bm.get(0) && bm.get(1 % N)) || performance.now() - t0 > 3000 ? r() : setTimeout(w, 30); w(); });
-      // logo
-      let logo = null; const lsrc = opc.logo || CFG.logo; if (p.logo && lsrc) { logo = new Image(); logo.src = typeof lsrc === 'function' ? lsrc() : lsrc; }
-      const titulo = p.titulo || (p.logo ? (CFG.titulo || CFG.nombre) : '');
-      // audio
-      if (vid) { aurl = URL.createObjectURL(vid); audio = new Audio(aurl); audio.playbackRate = p.vel; audio.preservesPitch = false; audio.volume = 1; try { await audio.play(); } catch (e) { audio = null; } }
-      const C1 = hex(p.colores[0] || (p.estilo === 'neon' ? '#ff2ad0' : '#ffc21a')), C2 = hex(p.colores[1] || p.colores[0] || (p.estilo === 'neon' ? '#1ae0ff' : '#5a8aff'));
-      const tint = p.colores.length ? C1 : [0, 0, 0], tint2 = p.colores.length ? C2 : [0, 0, 0];
-      const EST = { normal: 0, bn: 1, sepia: 2, neon: 3, calido: 4, frio: 5, oscuro: 6 }[p.estilo];
-      const MODO = { solido: 0, puntos: 1, malla: 2, holo: 3 }[p.modo];
-      const efe = e => p.efectos.includes(e);
-      const TIPOS = { nieve: 0, lluvia: 1, chispas: 2, confeti: 3, estrellas: 4, burbujas: 5, fuego: 6 };
-      const parts = p.efectos.filter(e => e in TIPOS).map(e => TIPOS[e]);
-      const durV = meta.dur, durT = durV / p.vel + (titulo || logo ? 2.6 : 0.6);
-      const g2 = c2.getContext('2d');
-      let i0 = -1, t0 = performance.now(), last = performance.now();
-      const pinta = () => {
-        if (!vivo) return;
-        const now = performance.now(), T = (now - t0) / 1000;
-        let tv = audio && !audio.paused && !audio.ended ? audio.currentTime : T * p.vel;
-        tv = Math.min(tv, durV - 1e-3);
-        const fi = Math.min(N - 1.001, tv * meta.fps), a = Math.floor(fi), mix = fi - a;
-        if (a !== i0 && bm.get(a)) {
-          i0 = a; const nx = Math.min(N - 1, a + 1);
-          subeC(tC[0], bm.get(a)); subeC(tC[1], bm.get(nx) || bm.get(a)); subeD(tD[0], frames[a].dep); subeD(tD[1], frames[nx].dep);
-          for (const [j, x] of bm) if (j < a - 1 && x) { x.close && x.close(); bm.delete(j); }
-          for (let j = a; j < a + 10; j++) pide(j);
-        }
-        const W = cv.width, H = cv.height, sa = W / H, u = Math.min(1, T / (durV / p.vel));
-        const cam = camTotal(p, u, T, asp / sa);
-        const up = [Math.sin(cam.r), Math.cos(cam.r), 0];
-        const fit = Math.max(1, (asp / sa));
-        const pv = mul(persp(0.82, sa, 0.05, 40), lookAt(cam.e.map((v, k) => k === 2 ? v * fit : v), cam.c, up));
-        preparaFbo(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.viewport(0, 0, W, H);
-        const bg = efe('estrellas') || p.estilo === 'oscuro' ? [0.01, 0.01, 0.03] : [tint[0] * 0.12 + 0.02, tint[1] * 0.12 + 0.02, tint[2] * 0.12 + 0.05];
-        gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
-        const fade = Math.min(1, T / 0.8) * Math.min(1, (durT - T) / 0.7);
-        const expl = efe('explosion') ? Math.max(0, (T - (durV / p.vel - 1.6)) / 1.6) : 0;
-        gl.useProgram(PM.p); const U = PM.u;
-        gl.uniformMatrix4fv(U.uPV, false, pv); gl.uniform1f(U.uMix, mix); gl.uniform1f(U.uRel, 0.95 * p.relieve); gl.uniform1f(U.uAsp, asp); gl.uniform1f(U.uExp, expl * expl);
-        gl.uniform1f(U.uT, T); gl.uniform1f(U.uPx, H * (MODO === 1 ? 0.012 : 0.004) * 2.2 * (240 / PX)); gl.uniform1f(U.uLuz, p.luces + (MODO ? 0.2 : 0)); gl.uniform1f(U.uModo, MODO);
-        gl.uniform1f(U.uNie, efe('niebla') ? 1.1 : 0.15); gl.uniform1f(U.uGrid, 70); gl.uniform3fv(U.uL1, C1); gl.uniform3fv(U.uL2, C2); gl.uniform3fv(U.uNiebla, bg.map(x => x + 0.25));
-        [[tC[0], 'uC0'], [tC[1], 'uC1'], [tD[0], 'uD0'], [tD[1], 'uD1']].forEach(([t, n], j) => { gl.activeTexture(gl.TEXTURE0 + j); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(U[n], j); });
-        if (MODO === 3) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); }
-        if (MODO === 1 || expl > 0.02) { gl.bindVertexArray(vaoP); gl.drawArrays(gl.POINTS, 0, PX * PY); }
-        else { gl.bindVertexArray(vaoM); gl.drawElements(gl.TRIANGLES, GX * GY * 6, gl.UNSIGNED_INT, 0); }
-        if (parts.length) {
-          gl.useProgram(PP.p); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false); gl.bindVertexArray(vaoS);
-          gl.uniformMatrix4fv(PP.u.uPV, false, pv); gl.uniform1f(PP.u.uT, T); gl.uniform1f(PP.u.uPx, H / 900);
-          for (const tp of parts) { gl.uniform1f(PP.u.uTipo, tp); gl.drawArrays(gl.POINTS, 0, NP / parts.length | 0); }
-          gl.depthMask(true);
-        }
-        gl.disable(gl.BLEND);
-        gl.bindTexture(gl.TEXTURE_2D, ftex); gl.generateMipmap(gl.TEXTURE_2D);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.disable(gl.DEPTH_TEST);
-        gl.useProgram(PQ.p); const Q = PQ.u; gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, ftex); gl.uniform1i(Q.uS, 0);
-        gl.uniform1f(Q.uT, T); gl.uniform1f(Q.uFade, Math.max(0, fade)); gl.uniform1f(Q.uEst, EST); gl.uniform1f(Q.uBrillo, efe('brillo') || p.estilo === 'neon' || MODO === 3 ? 1 : 0.25);
-        gl.uniform1f(Q.uGlitch, efe('glitch') ? 1 : 0); gl.uniform1f(Q.uVhs, efe('vhs') ? 1 : 0); gl.uniform1f(Q.uVin, efe('vineta') || p.cine ? 1 : 0.45); gl.uniform1f(Q.uCine, p.cine ? 1 : 0);
-        gl.uniform1f(Q.uSat, p.estilo === 'neon' ? 1.5 : 1.08); gl.uniform3fv(Q.uTint, tint); gl.uniform3fv(Q.uTint2, tint2); gl.uniform2f(Q.uRes, W, H);
-        gl.bindVertexArray(vaoQ); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.bindVertexArray(null);
-        // rótulo / logo
-        g2.clearRect(0, 0, c2.width, c2.height);
-        const tl = durV / p.vel - 1.2;
-        if ((titulo || logo) && T > tl) {
-          const k2 = Math.min(1, (T - tl) / 0.9), e = 1 - Math.pow(1 - k2, 3), op = Math.min(1, (durT - T) / 0.6);
-          g2.save(); g2.globalAlpha = Math.max(0, op); g2.translate(c2.width / 2, c2.height / 2); g2.scale(0.6 + 0.4 * e, 0.6 + 0.4 * e); g2.globalAlpha *= e;
-          let y = 0;
-          if (logo && logo.complete && logo.naturalWidth) { const lh = c2.height * 0.42, lw = lh * logo.naturalWidth / logo.naturalHeight; const lw2 = Math.min(lw, c2.width * 0.7), lh2 = lw2 * logo.naturalHeight / logo.naturalWidth; g2.shadowColor = `rgb(${C1.map(x => x * 255 | 0)})`; g2.shadowBlur = 40 * dpr; g2.drawImage(logo, -lw2 / 2, -lh2 / 2 - (p.titulo ? c2.height * 0.08 : 0), lw2, lh2); y = lh2 / 2 + c2.height * 0.04; }
-          if (titulo && (!logo || p.titulo || !(logo.complete && logo.naturalWidth))) {
-            const fs = Math.min(c2.width / Math.max(6, titulo.length) * 1.5, c2.height * 0.14);
-            g2.font = `900 ${fs}px system-ui, sans-serif`; g2.textAlign = 'center'; g2.textBaseline = 'middle';
-            g2.shadowColor = `rgb(${C1.map(x => x * 255 | 0)})`; g2.shadowBlur = 30 * dpr; g2.lineWidth = fs * 0.08; g2.strokeStyle = '#000a'; g2.strokeText(titulo, 0, y); g2.fillStyle = '#fff'; g2.fillText(titulo, 0, y);
-          }
-          g2.restore();
-        }
-        if (opc.alFotograma) opc.alFotograma(T, durT);
-        if (T >= durT) return acabar();
-        requestAnimationFrame(pinta);
-      };
-      requestAnimationFrame(pinta);
-      if (opc.alEmpezar) opc.alEmpezar({ acabar, ov });
+  // ------------------------------------------------------------------ guion → plan de rodaje en el plató 3D del juego
+  const SUJETOS = { publico: /public|grada|espectador|gente|audiencia/, concursantes: /concursant|oponent|jugador|participant|rival/, presentador: /presentador|presentadora|host/, logo: /logo|titulo del programa|rotulo grande/, plato: /plato|escenario|set|estudio|trampilla|huella/ };
+  function plan(guion, desc) {
+    const p = interpretar(desc != null ? desc : guion.desc), s = String(desc != null ? desc : guion.desc || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const pide = Object.keys(SUJETOS).filter(k => SUJETOS[k].test(s));
+    const ciclo = pide.length ? pide.concat(['plato', 'concursantes', 'publico']) : ['plato', 'concursantes', 'publico', 'plato', 'concursantes', 'presentador'];
+    const camDesc = p.camaras.slice(); let ci = 0, si = 0;
+    const tomas = guion.tomas.map((T, k) => {
+      const ax = Math.abs(T.dx), ay = Math.abs(T.dy), az = Math.abs(T.ds) * 60;
+      let mov = 'orbita', dir = 1;
+      if (az > 0.9 && az >= ax && az >= ay) mov = T.ds > 0 ? 'acercar' : 'alejar';
+      else if (ax > 0.25 && ax >= ay) { mov = 'lateral'; dir = T.dx > 0 ? -1 : 1; }
+      else if (ay > 0.25) { mov = 'grua'; dir = T.dy > 0 ? -1 : 1; }
+      else if (ax + ay < 0.08) mov = 'fija';
+      if (/camara|gir|acerc|alej|lateral|dron|vuel|grua|cenital/.test(s) && camDesc.length && !(p.camaras.length === 2 && p.camaras[0] === 'acercar' && p.camaras[1] === 'orbita' && !/acerc|gir/.test(s))) mov = camDesc[ci++ % camDesc.length];
+      const sujeto = T.logo ? 'logo' : ciclo[si++ % ciclo.length];
+      return { t0: T.t0 / p.vel, t1: T.t1 / p.vel, mov, dir, vel: p.vel * (1 + Math.min(1.5, ax + ay + az) * 0.4), sujeto, textos: T.textos.slice(0, 3), flash: T.flash, rgb: T.rgb, luz: T.luz };
     });
+    if (/logo al final|termina con el logo|acaba con el logo/.test(s) || (p.logo && !tomas.some(t => t.sujeto === 'logo') && tomas.length)) tomas[tomas.length - 1].sujeto = 'logo';
+    if (/empieza con el logo|logo al principio/.test(s) && tomas.length) tomas[0].sujeto = 'logo';
+    // textos: los del vídeo (OCR) + el de la descripción; si no hay ninguno, los créditos del juego
+    const banners = [];
+    tomas.forEach(t => { const n = t.textos.length, seg = (t.t1 - t.t0) / Math.max(1, n); t.textos.forEach((x, j) => banners.push({ t: t.t0 + seg * j + 0.3, txt: x, dur: Math.max(1600, Math.min(3500, seg * 1000 - 400)) })); });
+    if (p.titulo) banners.push({ t: Math.max(0.5, (tomas.length ? tomas[tomas.length - 1].t0 : 1) + 0.4), txt: p.titulo, dur: 3000 });
+    if (!banners.length && CFG.creditos) { const cr = CFG.creditos() || []; const usable = tomas.filter(t => t.sujeto !== 'logo' && t.t1 - t.t0 > 1); usable.slice(0, cr.length).forEach((t, k) => banners.push({ t: t.t0 + 0.3, txt: cr[k], dur: Math.max(1800, Math.min(3200, (t.t1 - t.t0) * 1000 - 300)) })); }
+    const tag = (String(desc != null ? desc : guion.desc || '').match(/#[\wÁÉÍÓÚÑáéíóúñ]+/) || [])[0];
+    const espec = [['nochebuena', 'nochebuena'], ['navidad', 'navidad'], ['nochevieja', 'findeano'], ['fin de ano', 'findeano'], ['halloween', 'halloween'], ['verano', 'verano'], ['carnaval', 'carnaval'], ['prime time', 'primetime'], ['primetime', 'primetime'], ['ninos', 'ninos'], ['infantil', 'ninos']].find(([k]) => s.includes(k));
+    const look = p.estilo === 'oscuro' ? 'morado' : p.colores.length ? (/#(ff|c0|a0|9a)/i.test(p.colores[0]) && /a040ff|9a3aff|c08aff|ff4fb0|ff2ad0/.test(p.colores.join()) ? 'morado' : /2f6bff|1ae0ff|1ae0d0|7ac8ff/.test(p.colores.join()) ? 'cian' : /ffffff|c8d0e0/.test(p.colores.join()) ? 'blanco' : null) : null;
+    return { dur: guion.dur / p.vel, vel: p.vel, tomas, banners, golpes: (guion.golpes || []).map(x => x / p.vel), hashtag: tag || (espec && CFG.hashtag ? CFG.hashtag(espec[1]) : null) || guion.hashtag || (CFG.hashtag ? CFG.hashtag(null) : null) || ('#' + String(CFG.nombre).replace(/[^\wÁÉÍÓÚÑáéíóúñ]/g, '') + (espec ? espec[1][0].toUpperCase() + espec[1].slice(1) : '')), especial: espec && espec[1], efectos: p.efectos, look, mudo: p.mudo || !guion.audio, colores: p.colores, p };
   }
-
+  async function reproducir(opc = {}) {
+    const guion = await getMeta(); if (!guion || guion.v !== 2) return false;
+    if (!CFG.recrear) { alert('Este juego todavía no tiene plató para recrear la cabecera.'); return false; }
+    const pl = plan(guion, opc.desc);
+    const vid = pl.mudo ? null : await getBlob('video'); const audio = vid ? URL.createObjectURL(vid) : null;
+    document.body.dataset.mc3d = '1'; try { await CFG.recrear(pl, { audio, ctx: opc.ctx || null, preview: !!opc.preview }); } finally { delete document.body.dataset.mc3d; if (audio) setTimeout(() => URL.revokeObjectURL(audio), 1000); }
+    return true;
+  }
+  /** reproductor de audio sincronizado para los adaptadores de cada juego */
+  function pista(url, vel) {
+    const t0 = performance.now(); let a = null;
+    if (url) { a = new Audio(url); a.playbackRate = vel || 1; a.preservesPitch = false; a.play().catch(() => { a = null; }); }
+    return { t: () => a && !a.paused && !a.ended && a.currentTime > 0 ? a.currentTime / (vel || 1) : (performance.now() - t0) / 1000, parar: () => { try { a && a.pause(); } catch (e) { } }, el: () => a };
+  }
   // ------------------------------------------------------------------ interfaz (Opciones › Mi cabecera 3D)
   const modoIntro = () => localStorage.getItem(K('modo')) || 'antes';
   function css() {
@@ -414,16 +314,16 @@
     const meta = await getMeta();
     const descG = localStorage.getItem(K('desc')) || (meta && meta.desc) || '';
     pn.innerHTML = `<div class="cj"><h2>🎥 Mi cabecera 3D</h2>
-<p class="sm">Sube un vídeo y describe cómo lo quieres. La IA calcula la profundidad de cada fotograma y convierte <b>todo el vídeo en una escena 3D</b> (relieve, cámara que se mueve por dentro, luces y efectos). Funciona sin conexión y se guarda en este dispositivo. Sale al empezar el Programa completo.</p>
-<p><button class="g" data-a="elegir">📁 Elegir vídeo</button><span data-k="arch" class="sm">${meta ? 'Guardada: ' + esc(meta.nombre) + ' · ' + meta.n + ' fotogramas 3D · ' + meta.dur.toFixed(1) + ' s' : 'Ningún vídeo todavía'}</span></p>
+<p class="sm">Sube un vídeo y describe cómo lo quieres. La IA analiza el vídeo (planos y cortes, movimientos de cámara, ritmo, colores, textos y títulos con OCR, cuándo sale el logo y la música) y <b>lo vuelve a rodar entero en 3D en el plató del juego</b>: los mismos planos y movimientos de cámara, los títulos en rótulos, el logo en 3D y el audio original de fondo. Funciona sin conexión y se guarda en este dispositivo. Sale al empezar el Programa completo.</p>
+<p><button class="g" data-a="elegir">📁 Elegir vídeo</button><span data-k="arch" class="sm">${meta ? 'Guardada: ' + esc(meta.nombre) + (meta.v === 2 ? ' · ' + meta.tomas.length + ' planos · ' + meta.dur.toFixed(1) + ' s' : ' (versión anterior: vuelve a convertirla)') : 'Ningún vídeo todavía'}</span></p>
 <input type="file" accept="video/*" style="display:none">
-<p><b>¿Cómo la quieres?</b></p><textarea placeholder="Ej.: tonos dorados y morados, la cámara se acerca y gira alrededor, chispas y brillo, despacio, con el logo y el texto «¡Esta noche!»">${esc(descG)}</textarea>
+<p><b>¿Cómo la quieres?</b></p><textarea placeholder="Ej.: especial Nochebuena, la cámara vuela por el plató y enseña al público y a los concursantes, luces moradas, termina con el logo, #AhoraCaigoNochebuena y el texto «¡Esta noche, gran final!»">${esc(descG)}</textarea>
 <div class="chips" data-k="chips"></div>
 <p class="sm" data-k="ent"></p>
-<p>Calidad de la conversión: <span data-k="cal"></span></p>
-<p><button class="g" data-a="conv">✨ Convertir en 3D con IA</button><button data-a="cancel" style="display:none">✖ Cancelar</button></p>
-<div data-k="prog" style="display:none"><div class="bar"><i></i></div><p class="sm" data-k="ptxt"></p><div class="vis"><canvas data-k="vc"></canvas><canvas data-k="vd"></canvas></div></div>
-<p><button data-a="ver" ${meta ? '' : 'disabled'}>▶️ Vista previa</button><button data-a="guardar" ${meta ? '' : 'disabled'}>💾 Guardar descripción</button><button data-a="borrar" ${meta ? '' : 'disabled'}>🗑 Borrar</button></p>
+<p><button class="g" data-a="conv">✨ Recrear en 3D con IA</button><button data-a="cancel" style="display:none">✖ Cancelar</button></p>
+<div data-k="prog" style="display:none"><div class="bar"><i></i></div><p class="sm" data-k="ptxt"></p><div class="vis"><canvas data-k="vc"></canvas></div></div>
+<div data-k="txts"></div>
+<p><button data-a="ver" ${meta ? '' : 'disabled'}>▶️ Vista previa</button><button data-a="guardar" ${meta ? '' : 'disabled'}>💾 Guardar descripción y rótulos</button><button data-a="borrar" ${meta ? '' : 'disabled'}>🗑 Borrar</button></p>
 <p>Al empezar el Programa completo: <span data-k="modo"></span></p>
 <p style="text-align:right"><button class="g" data-a="cerrar">Cerrar</button></p></div>`;
     document.body.appendChild(pn);
@@ -431,10 +331,22 @@
     pn.addEventListener('click', e => e.stopPropagation()); pn.addEventListener('keydown', e => e.stopPropagation()); pn.addEventListener('keyup', e => e.stopPropagation());
     const ent = () => { const p = interpretar(ta.value); $('[data-k=ent]').textContent = 'La IA ha entendido: ' + (p.entendido.length ? p.entendido.join(' · ') : 'estilo por defecto (se acerca y gira, colores del vídeo)'); };
     ta.oninput = ent; ent();
-    for (const c of ['dorado y morado', 'neón', 'blanco y negro', 'retro VHS', 'la cámara gira alrededor', 'se acerca', 'vuelo de dron', 'travelling lateral', 'nube de puntos', 'holograma', 'chispas', 'confeti', 'nieve', 'estrellas', 'brillo', 'glitch', 'niebla', 'explota al final', 'cámara lenta', 'rápido', 'mucho relieve', 'con el logo', 'sin sonido']) { const b = document.createElement('button'); b.textContent = '+ ' + c; b.onclick = () => { ta.value = (ta.value.trim() ? ta.value.trim().replace(/[.,]$/, '') + ', ' : '') + c; ent(); }; $('[data-k=chips]').appendChild(b); }
+    // textos que ha leído la IA en cada plano: se pueden corregir, borrar o añadir antes de rodar
+    const pintaTextos = (m) => {
+      const z = $('[data-k=txts]'); z.innerHTML = ''; if (!m || m.v !== 2) return;
+      const h = document.createElement('p'); h.innerHTML = '<b>Rótulos detectados en el vídeo</b> <span class="sm">(corrígelos, bórralos o escribe uno nuevo; vacío = sin rótulo)</span>'; z.appendChild(h);
+      m.tomas.forEach((T, k) => { const r = document.createElement('div'); r.style.cssText = 'display:flex;gap:6px;align-items:center;margin:3px 0';
+        const l = document.createElement('span'); l.className = 'sm'; l.style.cssText = 'min-width:92px'; l.textContent = `Plano ${k + 1} · ${T.t0.toFixed(1)} s${T.logo ? ' 🅻' : ''}`;
+        const i = document.createElement('input'); i.type = 'text'; i.value = (T.textos || []).join(' | '); i.title = 'Separa con | varios rótulos del mismo plano'; i.placeholder = '(sin rótulo)'; i.dataset.k = k; i.style.cssText = 'flex:1;border-radius:8px;border:1px solid #ffffff44;background:#0006;color:#fff;padding:6px 8px;font:14px system-ui';
+        i.onkeydown = e => e.stopPropagation(); r.append(l, i); z.appendChild(r); });
+      const hb = document.createElement('p'); hb.innerHTML = '<span class="sm">Hashtag:</span> '; const hi = document.createElement('input'); hi.type = 'text'; hi.value = m.hashtag || ''; hi.placeholder = '(el del especial)'; hi.dataset.h = '1'; hi.style.cssText = 'border-radius:8px;border:1px solid #ffffff44;background:#0006;color:#fff;padding:6px 8px;font:14px system-ui'; hi.onkeydown = e => e.stopPropagation(); hb.appendChild(hi); z.appendChild(hb);
+    };
+    const guardaTextos = async () => { const m = await getMeta(); if (!m || m.v !== 2) return m; pn.querySelectorAll('[data-k=txts] input[data-k]').forEach(i => { const T = m.tomas[+i.dataset.k]; const v = i.value.trim(); T.textos = v ? v.split('|').map(x => x.trim()).filter(Boolean) : []; }); const hi = pn.querySelector('[data-k=txts] input[data-h]'); if (hi) m.hashtag = hi.value.trim() || null; m.desc = ta.value; await tx('meta', 'readwrite', st => st.put(m, 'meta')); return m; };
+    pintaTextos(meta);
+
+    for (const c of ['especial Nochebuena', 'especial Navidad', 'Halloween', 'gran final', 'enseña al público', 'enseña a los concursantes', 'el presentador', 'la cámara vuela por el plató', 'gira alrededor', 'se acerca', 'travelling lateral', 'desde arriba', 'luces moradas', 'luces azules', 'termina con el logo', 'empieza con el logo', 'confeti', 'fuegos artificiales', 'cámara lenta', 'rápido', 'sin sonido']) { const b = document.createElement('button'); b.textContent = '+ ' + c; b.onclick = () => { ta.value = (ta.value.trim() ? ta.value.trim().replace(/[.,]$/, '') + ', ' : '') + c; ent(); }; $('[data-k=chips]').appendChild(b); }
     let cal = localStorage.getItem(K('cal')) || 'normal';
     const grupo = (k, ops, val, set) => { const z = $(`[data-k=${k}]`); z.innerHTML = ''; for (const [v, t] of ops) { const b = document.createElement('button'); b.textContent = t; b.className = v === val ? 'sel' : ''; b.onclick = () => { set(v); z.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x === b)); }; z.appendChild(b); } };
-    grupo('cal', [['rapida', 'Rápida'], ['normal', 'Normal'], ['alta', 'Alta']], cal, v => { cal = v; localStorage.setItem(K('cal'), v); });
     grupo('modo', [['antes', 'Antes de la cabecera'], ['sustituye', 'En lugar de la cabecera'], ['no', 'No sale']], modoIntro(), v => localStorage.setItem(K('modo'), v));
     let file = null, cancel = null;
     $('[data-a=elegir]').onclick = () => inp.click();
@@ -443,24 +355,24 @@
     const botones = on => pn.querySelectorAll('[data-a=conv],[data-a=ver],[data-a=borrar],[data-a=elegir],[data-a=guardar]').forEach(b => b.disabled = !on);
     $('[data-a=conv]').onclick = async () => {
       if (!file) { inp.click(); return; }
-      const desc = ta.value + (cal !== 'normal' ? (cal === 'alta' ? ' · alta calidad' : ' · conversion rapida') : '');
+      const desc = ta.value;
       localStorage.setItem(K('desc'), ta.value);
       botones(false); $('[data-a=cancel]').style.display = ''; $('[data-k=prog]').style.display = ''; cancel = { no: false };
-      const vc = $('[data-k=vc]'), vd = $('[data-k=vd]');
+      const vc = $('[data-k=vc]');
       try {
-        const m = await convertir(file, desc, pr => {
+        const m = await analizar(file, desc, pr => {
           $('.bar i').style.width = Math.round(pr.f * 100) + '%'; $('[data-k=ptxt]').textContent = pr.txt;
-          if (pr.dep) { vc.width = pr.img.width; vc.height = pr.img.height; vc.getContext('2d').drawImage(pr.img, 0, 0); vd.width = pr.dw; vd.height = pr.dh; const g = vd.getContext('2d'), id = g.createImageData(pr.dw, pr.dh); for (let k = 0; k < pr.dep.length; k++) { const x = pr.dep[k]; id.data[k * 4] = Math.min(255, x * 1.3); id.data[k * 4 + 1] = x * x / 255; id.data[k * 4 + 2] = 80 + x * 0.4; id.data[k * 4 + 3] = 255; } g.putImageData(id, 0, 0); }
+          if (pr.img) { vc.width = pr.img.width; vc.height = pr.img.height; vc.getContext('2d').drawImage(pr.img, 0, 0); } if (false) { vc.width = pr.img.width; vc.height = pr.img.height; vc.getContext('2d').drawImage(pr.img, 0, 0); vd.width = pr.dw; vd.height = pr.dh; const g = vd.getContext('2d'), id = g.createImageData(pr.dw, pr.dh); for (let k = 0; k < pr.dep.length; k++) { const x = pr.dep[k]; id.data[k * 4] = Math.min(255, x * 1.3); id.data[k * 4 + 1] = x * x / 255; id.data[k * 4 + 2] = 80 + x * 0.4; id.data[k * 4 + 3] = 255; } g.putImageData(id, 0, 0); }
         }, cancel);
-        $('[data-k=ptxt]').textContent = `¡Lista! ${m.n} fotogramas convertidos a 3D en ${m.seg} s. Pulsa «Vista previa».`; $('[data-k=arch]').textContent = ' Guardada: ' + m.nombre + ' · ' + m.n + ' fotogramas 3D';
+        $('[data-k=ptxt]').textContent = `¡Lista! La IA ha analizado ${m.tomas.length} planos, ${m.tomas.reduce((a, t) => a + t.textos.length, 0)} textos, ${m.tomas.filter(t => t.logo).length} apariciones del logo y ${m.golpes.length} golpes de música en ${m.seg} s: se rodará en el plató 3D del juego. Pulsa «Vista previa».`; $('[data-k=arch]').textContent = ' Guardada: ' + m.nombre + ' · ' + m.tomas.length + ' planos'; pintaTextos(m);
       } catch (e) { $('[data-k=ptxt]').textContent = e.message === 'cancelado' ? 'Cancelado.' : '⚠️ ' + (e.message || e); }
       botones(true); $('[data-a=cancel]').style.display = 'none';
     };
     $('[data-a=cancel]').onclick = () => { if (cancel) cancel.no = true; };
-    $('[data-a=ver]').onclick = async () => { localStorage.setItem(K('desc'), ta.value); const m = await getMeta(); if (m) { m.desc = ta.value; await tx('meta', 'readwrite', st => st.put(m, 'meta')); } pn.style.display = 'none'; await reproducir({ desc: ta.value }); pn.style.display = ''; };
-    $('[data-a=guardar]').onclick = async () => { localStorage.setItem(K('desc'), ta.value); const m = await getMeta(); if (m) { m.desc = ta.value; await tx('meta', 'readwrite', st => st.put(m, 'meta')); $('[data-k=ptxt]').textContent = 'Descripción guardada (no hace falta volver a convertir: el estilo se aplica al reproducir).'; $('[data-k=prog]').style.display = ''; } };
-    $('[data-a=borrar]').onclick = async () => { if (!confirm('¿Borrar tu cabecera 3D de este dispositivo?')) return; await borrar(); $('[data-k=arch]').textContent = 'Ningún vídeo todavía'; ['ver', 'borrar', 'guardar'].forEach(a => $(`[data-a=${a}]`).disabled = true); };
-    $('[data-a=cerrar]').onclick = () => { if (cancel && !cancel.no && $('[data-a=cancel]').style.display === '') return; pn.remove(); };
+    $('[data-a=ver]').onclick = async () => { localStorage.setItem(K('desc'), ta.value); await guardaTextos(); pn.style.display = 'none'; try { await reproducir({ desc: ta.value, preview: true }); } finally { pn.style.display = ''; } };
+    $('[data-a=guardar]').onclick = async () => { localStorage.setItem(K('desc'), ta.value); const m = await guardaTextos(); if (m) { $('[data-k=ptxt]').textContent = 'Descripción guardada (no hace falta volver a analizar el vídeo: la descripción se aplica al rodar).'; $('[data-k=prog]').style.display = ''; } };
+    $('[data-a=borrar]').onclick = async () => { if (!confirm('¿Borrar tu cabecera 3D de este dispositivo?')) return; await borrar(); $('[data-k=arch]').textContent = 'Ningún vídeo todavía'; pintaTextos(null); ['ver', 'borrar', 'guardar'].forEach(a => $(`[data-a=${a}]`).disabled = true); };
+    $('[data-a=cerrar]').onclick = async () => { await guardaTextos(); if (cancel && !cancel.no && $('[data-a=cancel]').style.display === '') return; pn.remove(); };
     return pn;
   }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -468,16 +380,16 @@
   function fila(o = {}) {
     const row = document.createElement(o.tag || 'div'); row.className = o.rowClass || 'orow'; row.id = 'rowMiCabecera3D';
     if (o.style) row.style.cssText = o.style;
-    const lb = document.createElement(o.labelTag || 'label'); lb.textContent = o.texto || '🎥 Mi cabecera 3D (tu vídeo convertido en 3D con IA)'; if (o.labelClass) lb.className = o.labelClass; row.appendChild(lb);
+    const lb = document.createElement(o.labelTag || 'label'); lb.textContent = o.texto || '🎥 Mi cabecera 3D (tu vídeo recreado en 3D con IA)'; if (o.labelClass) lb.className = o.labelClass; row.appendChild(lb);
     const b = document.createElement('button'); b.className = o.btnClass || 'tbtn'; b.textContent = o.boton || 'Abrir'; b.onclick = ev => { ev.stopPropagation(); abrir(); }; row.appendChild(b);
     if (o.btnStyle) b.style.cssText = o.btnStyle;
     return row;
   }
   async function hay() { return !!(await getMeta()); }
   /** al empezar el Programa completo. Devuelve true si debe SUSTITUIR a la cabecera del juego. */
-  async function introPrograma() {
-    try { if (window.__noMC3D || modoIntro() === 'no') return false; if (!(await hay())) return false; await reproducir(); return modoIntro() === 'sustituye'; }
+  async function introPrograma(ctx) {
+    try { if (window.__noMC3D || modoIntro() === 'no') return false; const g = await getMeta(); if (!g || g.v !== 2) return false; await reproducir({ ctx }); return modoIntro() === 'sustituye'; }
     catch (e) { console.warn('[MC3D]', e); return false; }
   }
-  window.MC3D = { config: o => Object.assign(CFG, o), interpretar, convertir, reproducir, vistaPrevia: () => reproducir(), abrir, fila, hay, introPrograma, borrar, BASE, version: '1.0' };
+  window.MC3D = { config: o => Object.assign(CFG, o), interpretar, analizar, plan, pista, reproducir, vistaPrevia: () => reproducir(), abrir, fila, hay, introPrograma, borrar, BASE, version: '1.0' };
 })();
