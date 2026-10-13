@@ -1,5 +1,5 @@
 // Service worker: juego disponible sin conexión (PWA). Red primero, caché de respaldo.
-const CACHE = 'cadutalibera-v1-0-5';
+const CACHE = 'cadutalibera-v1-0-6';
 const BASE = ['./', 'index.html', 'js/app.js', 'js/app_it.js', 'assets/app.css', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'voz/index.json', 'voz/q/index.json'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(BASE)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
